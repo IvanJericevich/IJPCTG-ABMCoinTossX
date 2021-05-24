@@ -54,3 +54,19 @@ end
         sleep(3)
     end
 end
+
+#=
+udpsock = UDPSocket()
+z = bind(udpsock,ip"127.0.0.1",40456)
+join_multicast_group(udpsock, "224.0.1.1")
+close(udpsock)
+
+@async begin
+    server = listen(2000)
+    while true
+       sock = accept(server)
+       println("Hello World\n")
+    end
+end
+CancelOrder(client, 2, "John", "Buy", 49)
+=#
