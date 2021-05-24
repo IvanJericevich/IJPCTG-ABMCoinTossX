@@ -22,11 +22,13 @@ CoinTossXUtilities:
 using JavaCall, Sockets, Dates, Reactive
 import JavaCall: iterator
 #---------------------------------------------------------------------------------------------------
-
+# Set the directory to the folder where CoinTossX is
+directory = "/home/ivanjericevich"
+directory = "/Users/patrickchang1/Exchange"
 #----- Build, deploy, start CoinTossX and initialise Java Virtual Machine with required byte code paths -----#
 # function StartJVM()
-#     JavaCall.addClassPath("/home/ivanjericevich/CoinTossX/ClientSimulator/build/classes/main")
-#     JavaCall.addClassPath("/home/ivanjericevich/CoinTossX/ClientSimulator/build/install/ClientSimulator/lib/*.jar")
+#     JavaCall.addClassPath(directory * "/CoinTossX/ClientSimulator/build/classes/main")
+#     JavaCall.addClassPath(directory * "/CoinTossX/ClientSimulator/build/install/ClientSimulator/lib/*.jar")
 #     JavaCall.init()
 #     Juno.notification("JVM started"; kind = :Info, options = Dict(:dismissable => false))
 # end
@@ -34,18 +36,18 @@ function StartCoinTossX(; build::Bool = true, deploy::Bool = true)
     # run(`sudo sysctl net.core.rmem_max=2097152`)
     # run(`sudo sysctl net.core.wmem_max=2097152`)
     # run(`sudo sysctl vm.nr_hugepages=10000`)
-    cd("/home/ivanjericevich/CoinTossX")
+    cd(directory * "/CoinTossX")
 	if build
 		run(`./gradlew -Penv=local build -x test`)
 	end
     if deploy
 		run(`./gradlew -Penv=local clean installDist bootWar copyResourcesToInstallDir copyToDeploy deployLocal`)
 	end
-    cd("/home/ivanjericevich/run/scripts")
+    cd(directory * "/run/scripts")
     run(`./startAll.sh`)
 	Juno.notification("CoinTossX started"; kind = :Info, options = Dict(:dismissable => false))
-    cd("/home/ivanjericevich")
-    JavaCall.addClassPath("/home/ivanjericevich/CoinTossX/ClientSimulator/build/install/ClientSimulator/lib/*.jar")
+    # cd(directory)
+    JavaCall.addClassPath(directory * "/CoinTossX/ClientSimulator/build/install/ClientSimulator/lib/*.jar")
     JavaCall.init()
     Juno.notification("JVM started"; kind = :Info, options = Dict(:dismissable => false))
 end
@@ -191,7 +193,7 @@ end
 
 #----- Shutdown all components of CoinTossX -----#
 function StopCoinTossX()
-    cd("/home/ivanjericevich/run/scripts")
+    cd(directory * "/run/scripts")
     run(`./stopAll.sh`)
     Juno.notification("CoinTossX stopped"; kind = :Info, options = Dict(:dismissable => false))
     exit()
