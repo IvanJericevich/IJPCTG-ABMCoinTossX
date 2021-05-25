@@ -1,17 +1,20 @@
-using Random, Distributions, Reactive
+using Random, Distributions, Reactive, DataFrames
 include("CoinTossXUtilities.jl")
 clearconsole()
 #---------------------------------------------------------------------------------------------------
 
 #----- Structures -----#
 struct Parameters
-    Nᴸᵥ::Int64 # Number of fundamentalists for the low-frequency agent class
     Nᴸₜ::Int64 # Number of chartists for the low-frequency agent class
+    Nᴸᵥ::Int64 # Number of fundamentalists for the low-frequency agent class
     Nᴴ::Int64 # Number of high-frequency agents
+    λᴸ::Float64 # Inter-arrival rate parameter for low-frequency agents
+    λᴴ::Float64 # Inter-arrival rate parameter for high-frequency agents
     λᴸmin::Float64 # Minimum inter-arrival rate parameter for low-frequency agents
     λᴸmax::Float64 # Maximum inter-arrival rate parameter for low-frequency agents
     λᴴmin::Float64 # Minimum inter-arrival rate parameter for high-frequency agents
     λᴴmax::Float64 # Maximum inter-arrival rate parameter for high-frequency agents
+    T::Float64  # Simulation time
 end
 mutable struct LimitOrder
     price::Int64
@@ -29,13 +32,15 @@ mutable struct LOBState
 end
 abstract type Agent end
 mutable struct Chartist <: Agent
-    dₜ::String # Decision to buy or sell
-    tradingGateway::Client # Object to submit orders
+    p̄ₜ::Float64
+    ActionTimes::Array{Float64,1} # Arrival process of when each agent makes a decision
 end
 mutable struct Fundamentalist <: Agent
-    dₜ::String # Decision to buy or sell
     fₜ::Float64 # Current perceived value
-    tradingGateway::Client # Object to submit orders
+    ActionTimes::Array{Float64,1} # Arrival process of when each agent makes a decision
+end
+mutable struct HighFrequency <: Agent
+    ActionTimes::Array{Float64,1} # Arrival process of when each agent makes a decision
 end
 #---------------------------------------------------------------------------------------------------
 
@@ -56,16 +61,21 @@ function Listen(LOB::LOBState)
 end
 #---------------------------------------------------------------------------------------------------
 
-#----- Initialize agents -----#
+#----- Initialize agents and their parameters -----#
 function InitializeAgents(parameters::Parameters)
-    agents = Vector{Agent}()
-    for i in 1:parameters.N
-        # Chartists
-        push!(agents, Chartist(...))
-        # Fundamentalists
-        push!(agents, Fundamentalist(...))
+    HFagents = Vector{Agent}()
+    chartists = Vector{Agent}()
+    fundamentalists = Vector{Agent}()
+    for i in 1:parameters.Nᴴ
+        push!(HFagents, HighFrequency(AgentTimes(parameters.λᴸ, parameters.λᴸmin, parameters.λᴸmax, parameters.T)))
     end
-    return chartists, fundamentalists
+    for i in 1:parameters.Nᴸₜ
+        push!(chartists, Chartist(100, AgentTimes(parameters.λᴸ, parameters.λᴸmin, parameters.λᴸmax, parameters.T)))
+    end
+    for i in 1:parameters.Nᴸᵥ
+        push!(fundamentalists, Fundamentalist(100, AgentTimes(parameters.λᴸ, parameters.λᴴmin, parameters.λᴴmax, parameters.T)))
+    end
+    return HFagents, chartists, fundamentalists
 end
 #---------------------------------------------------------------------------------------------------
 
@@ -148,19 +158,40 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Preset agent decision times -----#
-DecisionTimes = DataFrame(Times = Float64[], OrderType = :Symbol, AgentType = :Symbol, AgentNumber = Int64[])
-T = 500
-N𝐟 = 10
-# Adding HF agents decsion and cancellation times to DecisionTimes
-for i in 1:N𝐟
-    ActionTimes = AgentTimes(15, T)
-    CancelTimes = filter(x -> x<T, ActionTimes .+ 300)
-    ActionDF = DataFrame(Times = ActionTimes, OrderType = :LO, AgentType = :HF, AgentNumber = Int(i))
-    CancelDF = DataFrame(Times = CancelTimes, OrderType = :Cancel, AgentType = :HF, AgentNumber = Int(i))
-    DecisionTimes = [DecisionTimes; ActionDF]
-    DecisionTimes = [DecisionTimes; CancelDF]
+# Initialize agents and parameters
+parameters = Parameters(10, 10, 50, 20, 15, 10, 40, 10, 40, 500)
+# Initialize the agents
+(HFagents, chartists, fundamentalists) = InitializeAgents(parameters)
+# Initialize decision times
+function CreateAgentDecisions(parameters::Parameters, HFagents::Vector{Agent}, chartists::Vector{Agent}, fundamentalists::Vector{Agent})
+    # Create the dataframe
+    DecisionTimes = DataFrame(Times = Float64[], OrderType = :Symbol, AgentType = :Symbol, AgentNumber = Int64[])
+    # Adding HF agents decsion and cancellation times to DecisionTimes
+    for i in 1:parameters.Nᴴ
+        ActionTimes = HFagents[i].ActionTimes[2:end]
+        CancelTimes = filter(x -> x < parameters.T, ActionTimes .+ 300)
+        ActionDF = DataFrame(Times = ActionTimes, OrderType = :LO, AgentType = :HF, AgentNumber = Int(i))
+        CancelDF = DataFrame(Times = CancelTimes, OrderType = :Cancel, AgentType = :HF, AgentNumber = Int(i))
+        DecisionTimes = [DecisionTimes; ActionDF]
+        DecisionTimes = [DecisionTimes; CancelDF]
+    end
+    # Adding chartists decsion times to DecisionTimes
+    for i in 1:parameters.Nᴸₜ
+        ActionTimes = chartists[i].ActionTimes[2:end]
+        ActionDF = DataFrame(Times = ActionTimes, OrderType = :MO, AgentType = :Chartist, AgentNumber = Int(i))
+        DecisionTimes = [DecisionTimes; ActionDF]
+    end
+    # Adding fundamentalists decsion times to DecisionTimes
+    for i in 1:parameters.Nᴸᵥ
+        ActionTimes = fundamentalists[i].ActionTimes[2:end]
+        ActionDF = DataFrame(Times = ActionTimes, OrderType = :MO, AgentType = :Fundamentalist, AgentNumber = Int(i))
+        DecisionTimes = [DecisionTimes; ActionDF]
+    end
+    sort!(DecisionTimes, [:Times])
+    return DecisionTimes
 end
-sort!(DecisionTimes, [:Times])
+DecisionTimes = CreateAgentDecisions(parameters, HFagents, chartists, fundamentalists)
+
 #---------------------------------------------------------------------------------------------------
 
 #----- Simulation -----#
@@ -192,14 +223,15 @@ end
 function PowerLaw(xₘ, α) # Volumes
     return xₘ / (rand() ^ (1 / α))
 end
-function rexp(mean)
-    return -mean * log(rand())
+function rexp(θ, θmin, θmax)
+    return rand(Distributions.truncated(Exponential(θ), θmin, θmax))
 end
-function AgentTimes(mean, T)
+function AgentTimes(θ, θmin, θmax, T)
     t = Float64[]
     counter = 0.0
+    push!(t, counter)
     while true
-        τ = rexp(mean)
+        τ = rexp(θ, θmin, θmax)
         counter += τ
         if counter > T
             break
