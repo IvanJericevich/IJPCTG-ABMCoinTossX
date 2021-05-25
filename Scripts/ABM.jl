@@ -14,6 +14,7 @@ struct Parameters
     λᴸmax::Float64 # Maximum inter-arrival rate parameter for low-frequency agents
     λᴴmin::Float64 # Minimum inter-arrival rate parameter for high-frequency agents
     λᴴmax::Float64 # Maximum inter-arrival rate parameter for high-frequency agents
+    δ::Float64     # Upper cut-off for LF agents decision rule
     T::Float64  # Simulation time
 end
 mutable struct LimitOrder
@@ -32,8 +33,9 @@ mutable struct LOBState
 end
 abstract type Agent end
 mutable struct Chartist <: Agent
-    p̄ₜ::Float64
+    p̄ₜ::Float64    # Agent's mid-price EWMA
     ActionTimes::Array{Float64,1} # Arrival process of when each agent makes a decision
+    τ::Float64    # Time constant (used for EWMA computation) = Average inter-arrival of their decision times
 end
 mutable struct Fundamentalist <: Agent
     fₜ::Float64 # Current perceived value
@@ -70,7 +72,8 @@ function InitializeAgents(parameters::Parameters)
         push!(HFagents, HighFrequency(AgentTimes(parameters.λᴸ, parameters.λᴸmin, parameters.λᴸmax, parameters.T)))
     end
     for i in 1:parameters.Nᴸₜ
-        push!(chartists, Chartist(100, AgentTimes(parameters.λᴸ, parameters.λᴸmin, parameters.λᴸmax, parameters.T)))
+        ActionTimes = AgentTimes(parameters.λᴸ, parameters.λᴸmin, parameters.λᴸmax, parameters.T)
+        push!(chartists, Chartist(100, ActionTimes, convert(Float64, mean(diff(ActionTimes)))))
     end
     for i in 1:parameters.Nᴸᵥ
         push!(fundamentalists, Fundamentalist(100, AgentTimes(parameters.λᴸ, parameters.λᴴmin, parameters.λᴴmax, parameters.T)))
@@ -80,7 +83,7 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Agent rules -----#
-function HighFrequencyAgentAction(LOB::LOBState, agentNumber::Int64)
+function HighFrequencyAgentAction(LOB::LOBState, parameters::Parameters)
     θ = LOB.ρₜ/2 + .5   # Probability of placing an ask
     decision = rand() < θ ? :Ask : :Bid
     if decision == :Ask     # Sell order
@@ -97,6 +100,27 @@ function HighFrequencyAgentAction(LOB::LOBState, agentNumber::Int64)
         volume = PowerLaw(10, α)
     end
     return decision, limitPrice, volume
+end
+function ChartistAction(LOB::LOBState, chartists::Vector{Agent}, parameters::Parameters, agentNumber::Int64, orderNumber::Int64)
+    # Update the agent's EWMA
+    Δt = chartists[agentNumber].ActionTimes[orderNumber+1] - chartists[agentNumber].ActionTimes[orderNumber]    # Inter-arrival
+    λ = 1 - exp(- Δt / chartists[agentNumber].τ)    # Decay for low-pass filter
+    chartists[agentNumber].p̄ₜ += λ * (LOB.mₜ - chartists[agentNumber].p̄ₜ)
+    # Check if agent performs action
+    if abs(LOB.mₜ - chartists[agentNumber].p̄ₜ) <= LOB.sₜ
+        return nothing
+    end
+    # Determine the lower volume bound based on agent decision rule
+    if LOB.sₜ < abs(LOB.mₜ - chartists[agentNumber].p̄ₜ) <= (parameters.δ * LOB.mₜ)
+        xₘ = 20
+    end
+    if abs(LOB.mₜ - chartists[agentNumber].p̄ₜ) > (parameters.δ * LOB.mₜ)
+        xₘ = 50
+    end
+    decision = LOB.mₜ < chartists[agentNumber].p̄ₜ ? :Ask : :Bid
+    α = decision == :Ask ? 1 - LOB.ρₜ : 1 + LOB.ρₜ
+    volume = PowerLaw(xₘ, α)
+    return decision, volume
 end
 #---------------------------------------------------------------------------------------------------
 
@@ -159,7 +183,7 @@ end
 
 #----- Preset agent decision times -----#
 # Initialize agents and parameters
-parameters = Parameters(10, 10, 50, 20, 15, 10, 40, 10, 40, 500)
+parameters = Parameters(10, 10, 50, 20, 15, 10, 40, 10, 40, 0.05, 500)
 # Initialize the agents
 (HFagents, chartists, fundamentalists) = InitializeAgents(parameters)
 # Initialize decision times
