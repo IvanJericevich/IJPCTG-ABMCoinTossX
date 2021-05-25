@@ -69,6 +69,27 @@ function InitializeAgents(parameters::Parameters)
 end
 #---------------------------------------------------------------------------------------------------
 
+#----- Agent rules -----#
+function HighFrequencyAgentAction(LOB::LOBState, agentNumber::Int64)
+    θ = LOB.ρₜ/2 + .5   # Probability of placing an ask
+    decision = rand() < θ ? :Ask : :Bid
+    if decision == :Ask     # Sell order
+        α = 1 - LOB.ρₜ  # Shape for power law
+        λₜ = LOB.sₜ / exp(- LOB.ρₜ / 2)     # Placement depth parameter
+        η = floor(- λₜ * log(rand()))
+        limitPrice = LOB.bₜ + 1 + η
+        volume = PowerLaw(10, α)
+    else                    # Buy order
+        α = 1 + LOB.ρₜ  # Shape for power law
+        λₜ = LOB.sₜ / exp(LOB.ρₜ / 2)       # Placement depth parameter
+        η = floor(- λₜ * log(rand()))
+        limitPrice = LOB.aₜ - 1 - η
+        volume = PowerLaw(10, α)
+    end
+    return decision, limitPrice, volume
+end
+#---------------------------------------------------------------------------------------------------
+
 #----- Update positions -----#
 function UpdatePosition!(agent::HighFrequencyTrader, LOB::LOBState)
 end
@@ -126,6 +147,22 @@ function UpdateLOBState!(LOB::LOBState, message)
 end
 #---------------------------------------------------------------------------------------------------
 
+#----- Preset agent decision times -----#
+DecisionTimes = DataFrame(Times = Float64[], OrderType = :Symbol, AgentType = :Symbol, AgentNumber = Int64[])
+T = 500
+N𝐟 = 10
+# Adding HF agents decsion and cancellation times to DecisionTimes
+for i in 1:N𝐟
+    ActionTimes = AgentTimes(15, T)
+    CancelTimes = filter(x -> x<T, ActionTimes .+ 300)
+    ActionDF = DataFrame(Times = ActionTimes, OrderType = :LO, AgentType = :HF, AgentNumber = Int(i))
+    CancelDF = DataFrame(Times = CancelTimes, OrderType = :Cancel, AgentType = :HF, AgentNumber = Int(i))
+    DecisionTimes = [DecisionTimes; ActionDF]
+    DecisionTimes = [DecisionTimes; CancelDF]
+end
+sort!(DecisionTimes, [:Times])
+#---------------------------------------------------------------------------------------------------
+
 #----- Simulation -----#
 function Simulate(horizon::Int64, parameters::Parameters; seed = 1)
     Random.seed!(seed)
@@ -154,6 +191,22 @@ end
 #----- Supplementary functions -----#
 function PowerLaw(xₘ, α) # Volumes
     return xₘ / (rand() ^ (1 / α))
+end
+function rexp(mean)
+    return -mean * log(rand())
+end
+function AgentTimes(mean, T)
+    t = Float64[]
+    counter = 0.0
+    while true
+        τ = rexp(mean)
+        counter += τ
+        if counter > T
+            break
+        end
+        push!(t, counter)
+    end
+    return t
 end
 #---------------------------------------------------------------------------------------------------
 
