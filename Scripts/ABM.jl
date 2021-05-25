@@ -113,6 +113,8 @@ function HighFrequencyAgentAction!(order::Order, LOB::LOBState)
 		end
 	end
 end
+#### Q: We should have agentNumber as a param to draw from AgentIndex?
+#### Note: I think I see what you did in the inject sim function. We should remove [agentNumber] from code below then?
 function ChartistAction!(order::Order, LOB::LOBState, chartist::Chartist, parameters::Parameters)
     # Update the agent's EWMA
     Δt = chartist.actionTimes[chartist.orderNumber + 1] - chartist.actionTimes[chartist.orderNumber] # Inter-arrival
@@ -131,6 +133,20 @@ function ChartistAction!(order::Order, LOB::LOBState, chartist::Chartist, parame
 	    order.volume = round(Int, PowerLaw(xₘ, α))
     end
     chartist.orderNumber += 1
+end
+function FundamentalistAction!(order::Order, LOB::LOBState, fundamentalists::Fundamentalist, parameters::Parameters)
+    if !(abs(LOB.mₜ - fundamentalists[agentNumber].fₜ) <= LOB.sₜ) # Check if agent performs action
+        # Determine the lower volume bound based on agent decision rule
+        if LOB.sₜ < abs(LOB.mₜ - fundamentalists[agentNumber].fₜ) <= (parameters.δ * LOB.mₜ)
+	        xₘ = 20
+	    end
+	    if abs(LOB.mₜ - fundamentalists[agentNumber].fₜ) > (parameters.δ * LOB.mₜ)
+	        xₘ = 50
+	    end
+        order.side = fundamentalists[agentNumber].fₜ < LOB.mₜ ? "Sell" : "Buy"
+        α = order.side == "Sell" ? 1 - LOB.ρₜ : 1 + LOB.ρₜ
+	    order.volume = round(Int, PowerLaw(xₘ, α))
+    end
 end
 #---------------------------------------------------------------------------------------------------
 
