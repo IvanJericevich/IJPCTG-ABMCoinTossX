@@ -22,12 +22,18 @@ struct Parameters
     λᴴmin::Float64 # Minimum inter-arrival rate parameter for high-frequency agents
     λᴴmax::Float64 # Maximum inter-arrival rate parameter for high-frequency agents
     δ::Float64 # Upper cut-off for LF agents decision rule
+    m₀::Float64 # Initial mid-price
     T::Millisecond # Simulation time
 end
 mutable struct LimitOrder
     price::Int64
     volume::Int64
     trader::Symbol
+end
+mutable struct MovingAverage
+    p̄ₜ::Float64 # General EWMA of mid-price
+    actionTimes::Array{Millisecond,1} # Arrival process of when all agents makes a decision
+    τ::Float64 # Time constant (used for EWMA computation) = Average inter-arrival of their decision times
 end
 mutable struct LOBState
     sₜ::Int64 # Current spread
@@ -55,15 +61,18 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Market Data Listener -----#
-function Listen(LOB::LOBState)
+function Listen(LOB::LOBState, MA::MovingAverage)
     receiver = UDPSocket()
     connected = bind(receiver, ip"127.0.0.1", 1234)
+    index = 1
     if connected
 		println("Market data listener connected")
 		try
 			while true
 	            message = String(recv(receiver))
 				UpdateLOBState!(LOB, message)
+                UpdateMovingAverage!(LOB, MA, index)
+                index += 1
 	        end
 		finally
 			close(receiver)
@@ -78,9 +87,10 @@ function InitializeAgents(parameters::Parameters)
 	HFagents = map(i -> HighFrequency(AgentTimes(parameters.λᴸ, parameters.λᴸmin, parameters.λᴸmax, parameters.T)), 1:parameters.Nᴴ)
 	for i in 1:parameters.Nᴸₜ
 		actionTimes = AgentTimes(parameters.λᴸ, parameters.λᴸmin, parameters.λᴸmax, parameters.T)
-		push!(chartists, Chartist(100, actionTimes, convert(Float64, mean(diff(Dates.value.(actionTimes)))), 1))
+		push!(chartists, Chartist(parameters.m₀, actionTimes, convert(Float64, mean(diff(Dates.value.(actionTimes)))), 1))
 	end
-	fundamentalists = map(i -> Fundamentalist(100, AgentTimes(parameters.λᴸ, parameters.λᴴmin, parameters.λᴴmax, parameters.T)), 1:parameters.Nᴸᵥ)
+    # Fundamentalists need to change, because need do the random sampling around value
+	fundamentalists = map(i -> Fundamentalist(parameters.m₀, AgentTimes(parameters.λᴸ, parameters.λᴴmin, parameters.λᴴmax, parameters.T)), 1:parameters.Nᴸᵥ)
     return HFagents, chartists, fundamentalists
 end
 #---------------------------------------------------------------------------------------------------
@@ -150,6 +160,14 @@ function FundamentalistAction!(order::Order, LOB::LOBState, fundamentalists::Fun
 end
 #---------------------------------------------------------------------------------------------------
 
+#----- Update Moving Average -----#
+function UpdateMovingAverage!(LOB::LOBState, MA::MovingAverage, index::Int64)
+    Δt = MA.actionTimes[index + 1] - MA.actionTimes[index] # Inter-arrival
+    λ = 1 - exp(- Δt / MA.τ) # Decay for low-pass filter
+    MA.p̄ₜ += λ * (LOB.mₜ - MA.p̄ₜ)
+end
+#---------------------------------------------------------------------------------------------------
+
 #----- Update LOB state -----#
 function UpdateLOBState!(LOB::LOBState, message)
 	msg = split(message, "|")
@@ -198,7 +216,7 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Preset agent decision times -----#
-parameters = Parameters(10, 10, 50, 20, 15, 10, 40, 10, 40, 0.05, Millisecond(500 * 1000)) # Initialize parameters
+parameters = Parameters(10, 10, 50, 20, 15, 10, 40, 10, 40, 0.05, 100, Millisecond(500 * 1000)) # Initialize parameters
 (HFagents, chartists, fundamentalists) = InitializeAgents(parameters) # Initialize the agents
 function CreateAgentDecisions(parameters::Parameters, HFagents::Vector{HighFrequency}, chartists::Vector{Chartist}, fundamentalists::Vector{Fundamentalist}) # Initialize decision times
 	decisionTimes = DataFrame(RelativeTime = Vector{Millisecond}(), Order = Vector{Order}(), AgentType = Vector{Symbol}(), AgentIndex = Vector{Int64}())
@@ -228,6 +246,7 @@ function CreateAgentDecisions(parameters::Parameters, HFagents::Vector{HighFrequ
     return decisionTimes
 end
 decisionTimes = CreateAgentDecisions(parameters, HFagents, chartists, fundamentalists)
+MA = MovingAverage(parameters.m₀, [Millisecond(0); decisionTimes.RelativeTime], mean(diff(Dates.value.([Millisecond(0); decisionTimes.RelativeTime]))))
 #---------------------------------------------------------------------------------------------------
 
 #----- Supplementary functions -----#
@@ -251,7 +270,7 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Simulation -----#
-function InjectSimulation(data; seed = 1)
+function InjectSimulation(data; seed = 1, MA = MA)
 	Random.seed!(seed)
     gateway = Login(1, 1)
 	LOB = LOBState(10, 0, 50, 40, 60, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
