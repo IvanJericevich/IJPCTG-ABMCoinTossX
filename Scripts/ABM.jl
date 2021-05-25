@@ -165,26 +165,26 @@ parameters = Parameters(10, 10, 50, 20, 15, 10, 40, 10, 40, 500)
 # Initialize decision times
 function CreateAgentDecisions(parameters::Parameters, HFagents::Vector{Agent}, chartists::Vector{Agent}, fundamentalists::Vector{Agent})
     # Create the dataframe
-    DecisionTimes = DataFrame(Times = Float64[], OrderType = :Symbol, AgentType = :Symbol, AgentNumber = Int64[])
+    DecisionTimes = DataFrame(Times = Float64[], OrderType = :Symbol, AgentType = :Symbol, AgentNumber = Int64[], AgentOrderNumber = Int64[])
     # Adding HF agents decsion and cancellation times to DecisionTimes
     for i in 1:parameters.Nᴴ
         ActionTimes = HFagents[i].ActionTimes[2:end]
         CancelTimes = filter(x -> x < parameters.T, ActionTimes .+ 300)
-        ActionDF = DataFrame(Times = ActionTimes, OrderType = :LO, AgentType = :HF, AgentNumber = Int(i))
-        CancelDF = DataFrame(Times = CancelTimes, OrderType = :Cancel, AgentType = :HF, AgentNumber = Int(i))
+        ActionDF = DataFrame(Times = ActionTimes, OrderType = :LO, AgentType = :HF, AgentNumber = Int(i), AgentOrderNumber = collect(1:1:length(ActionTimes)))
+        CancelDF = DataFrame(Times = CancelTimes, OrderType = :Cancel, AgentType = :HF, AgentNumber = Int(i), AgentOrderNumber = collect(1:1:length(CancelTimes)))
         DecisionTimes = [DecisionTimes; ActionDF]
         DecisionTimes = [DecisionTimes; CancelDF]
     end
     # Adding chartists decsion times to DecisionTimes
     for i in 1:parameters.Nᴸₜ
         ActionTimes = chartists[i].ActionTimes[2:end]
-        ActionDF = DataFrame(Times = ActionTimes, OrderType = :MO, AgentType = :Chartist, AgentNumber = Int(i))
+        ActionDF = DataFrame(Times = ActionTimes, OrderType = :MO, AgentType = :Chartist, AgentNumber = Int(i), AgentOrderNumber = collect(1:1:length(ActionTimes)))
         DecisionTimes = [DecisionTimes; ActionDF]
     end
     # Adding fundamentalists decsion times to DecisionTimes
     for i in 1:parameters.Nᴸᵥ
         ActionTimes = fundamentalists[i].ActionTimes[2:end]
-        ActionDF = DataFrame(Times = ActionTimes, OrderType = :MO, AgentType = :Fundamentalist, AgentNumber = Int(i))
+        ActionDF = DataFrame(Times = ActionTimes, OrderType = :MO, AgentType = :Fundamentalist, AgentNumber = Int(i), AgentOrderNumber = collect(1:1:length(ActionTimes)))
         DecisionTimes = [DecisionTimes; ActionDF]
     end
     sort!(DecisionTimes, [:Times])
