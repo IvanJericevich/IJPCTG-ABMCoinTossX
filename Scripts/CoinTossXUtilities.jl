@@ -13,7 +13,7 @@ CoinTossXUtilities:
     8. Receive updates to the best bid/ask
     13. Destroy client by logging out and ending the trading session
 =#
-using JavaCall, Sockets, Dates
+using JavaCall
 directory = "/home/ivanjericevich"
 directory = "/Users/patrickchang1/Exchange"
 #---------------------------------------------------------------------------------------------------
@@ -53,7 +53,7 @@ mutable struct Order
     mes::Int64
     stopPrice::Int64
     expireTime::String
-    function Order(orderId::Int64, traderMnemonic::String, side::String, type::String, volume::Int64, price::Int64 = 0; tif::String = "Day", displayVolume = missing, mes::Int64 = 0, stopPrice::Int64 = 0, expireTime::String = Dates.format(now(), "YYYYmmdd-HH:MM:SS"))
+    function Order(; orderId::Int64 = 0, traderMnemonic::String = "", side::String = "", type::String = "", volume::Int64 = 0, price::Int64 = 0, tif::String = "Day", displayVolume = missing, mes::Int64 = 0, stopPrice::Int64 = 0, expireTime::String = "20211230-23:00:00")
         if ismissing(displayVolume)
             new(orderId, traderMnemonic, volume, price, side, type, tif, volume, mes, stopPrice, expireTime)
         else
@@ -65,7 +65,7 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Agent structure -----#
-struct Client
+struct TradingGateway
     id::Int64
     securityId::Int64
     javaObject::JavaObject{Symbol("client.Client")}
@@ -79,45 +79,45 @@ function Login(clientId::Int64, securityId::Int64)
     javaObject = jcall(utilities, "loadClientData", JavaObject{Symbol("client.Client")}, (jint, jint), clientId, securityId)
     jcall(javaObject, "sendStartMessage", Nothing, ())
     Juno.notification("Logged in and trading session started"; kind = :Info, options = Dict(:dismissable => false))
-    return Client(clientId, securityId, javaObject)
+    return TradingGateway(clientId, securityId, javaObject)
 end
 #---------------------------------------------------------------------------------------------------
 
 #----- Submit an order to CoinTossX -----#
-function SubmitOrder(client::Client, order::Order)
-    jcall(client.javaObject, "submitOrder", Nothing, (jint, JString, jlong, jlong, JString, JString, JString, JString, jlong, jlong, jlong), Int32(order.orderId), order.traderMnemonic, order.volume, order.price, order.side, order.type, order.tif, order.expireTime, order.displayVolume, order.mes, order.stopPrice)
+function SubmitOrder(tradingGateway::TradingGateway, order::Order)
+    jcall(tradingGateway.javaObject, "submitOrder", Nothing, (jint, JString, jlong, jlong, JString, JString, JString, JString, jlong, jlong, jlong), Int32(order.orderId), order.traderMnemonic, order.volume, order.price, order.side, order.type, order.tif, order.expireTime, order.displayVolume, order.mes, order.stopPrice)
 end
 #---------------------------------------------------------------------------------------------------
 
 #----- Cancel an existing order -----#
-function CancelOrder(client::Client, orderId::Int64, traderMnemonic::String, side::String, price::Int64)
-    jcall(client.javaObject, "cancelOrder", Nothing, (jint, JString, JString, jlong), Int32(orderId), traderMnemonic, side, price)
+function CancelOrder(tradingGateway::TradingGateway, order::Order)
+    jcall(tradingGateway.javaObject, "cancelOrder", Nothing, (jint, JString, JString, jlong), Int32(order.orderId), order.traderMnemonic, order.side, order.price)
 end
 #---------------------------------------------------------------------------------------------------
 
 #----- Receive updates to the best bid/ask -----#
-function ReceiveMarketData(client::Client, side::Symbol, type::Symbol)
+function ReceiveMarketData(tradingGateway::TradingGateway, side::Symbol, type::Symbol)
     if side == :Bid
-        data = type == :Price ? jcall(client.javaObject, "getBid", jlong, ()) : jcall(client.javaObject, "getBidQuantity", jlong, ())
+        data = type == :Price ? jcall(tradingGateway.javaObject, "getBid", jlong, ()) : jcall(tradingGateway.javaObject, "getBidQuantity", jlong, ())
     elseif side == :Ask
-        data = type == :Price ? jcall(client.javaObject, "getOffer", jlong, ()) : jcall(client.javaObject, "getOfferQuantity", jlong, ())
+        data = type == :Price ? jcall(tradingGateway.javaObject, "getOffer", jlong, ()) : jcall(tradingGateway.javaObject, "getOfferQuantity", jlong, ())
     end
     return data
 end
-function ReceiveMarketData(client::Client, side::Symbol)
+function ReceiveMarketData(tradingGateway::TradingGateway, side::Symbol)
     best = NamedTuple()
     if side == :Bid
-        return (Price = jcall(client.javaObject, "getBid", jlong, ()), Volume = jcall(client.javaObject, "getBidQuantity", jlong, ()))
+        return (Price = jcall(tradingGateway.javaObject, "getBid", jlong, ()), Volume = jcall(tradingGateway.javaObject, "getBidQuantity", jlong, ()))
     else
-        return (Price = jcall(client.javaObject, "getOffer", jlong, ()), Volume = jcall(client.javaObject, "getOfferQuantity", jlong, ()))
+        return (Price = jcall(tradingGateway.javaObject, "getOffer", jlong, ()), Volume = jcall(tradingGateway.javaObject, "getOfferQuantity", jlong, ()))
     end
 end
 #---------------------------------------------------------------------------------------------------
 
 #----- Destroy client by logging out and ending the trading session -----#
-function Logout(client::Client)
-    jcall(client.javaObject, "sendEndMessage", Nothing, ())
-    jcall(client.javaObject, "close", Nothing, ())
+function Logout(tradingGateway::TradingGateway)
+    jcall(tradingGateway.javaObject, "sendEndMessage", Nothing, ())
+    jcall(tradingGateway.javaObject, "close", Nothing, ())
     Juno.notification("Logged out and trading session ended"; kind = :Info, options = Dict(:dismissable => false))
 end
 #---------------------------------------------------------------------------------------------------
