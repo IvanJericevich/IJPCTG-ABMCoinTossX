@@ -13,6 +13,8 @@ CoinTossXUtilities:
     8. Receive updates to the best bid/ask
     13. Destroy client by logging out and ending the trading session
 =#
+# run(`export JULIA_COPY_STACKS=1`)
+# ENV["JULIA_COPY_STACKS"] = 1
 using JavaCall
 directory = "/home/ivanjericevich"
 directory = "/Users/patrickchang1/Exchange"
@@ -20,9 +22,9 @@ directory = "/Users/patrickchang1/Exchange"
 
 #----- Build, deploy, start CoinTossX and initialise Java Virtual Machine with required byte code paths -----#
 function StartCoinTossX(; build::Bool = true, deploy::Bool = true)
-    run(`sudo sysctl net.core.rmem_max=2097152`)
-    run(`sudo sysctl net.core.wmem_max=2097152`)
-    run(`sudo sysctl vm.nr_hugepages=10000`)
+    # run(`sudo sysctl net.core.rmem_max=2097152`)
+    # run(`sudo sysctl net.core.wmem_max=2097152`)
+    # run(`sudo sysctl vm.nr_hugepages=10000`)
     cd(directory * "/CoinTossX")
 	if build
 		run(`./gradlew -Penv=local build -x test`)
@@ -34,6 +36,9 @@ function StartCoinTossX(; build::Bool = true, deploy::Bool = true)
     run(`./startAll.sh`)
 	Juno.notification("CoinTossX started"; kind = :Info, options = Dict(:dismissable => false))
     cd(directory)
+end
+function StartJVM()
+    JavaCall.addClassPath(directory * "/CoinTossX/ClientSimulator/build/classes/main")
     JavaCall.addClassPath(directory * "/CoinTossX/ClientSimulator/build/install/ClientSimulator/lib/*.jar")
     JavaCall.init()
     Juno.notification("JVM started"; kind = :Info, options = Dict(:dismissable => false))

@@ -62,18 +62,18 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Market Data Listener -----#
-function Listen(LOB::LOBState, MA::MovingAverage)
+function Listen(LOB::LOBState)#, MA::MovingAverage)
     receiver = UDPSocket()
     connected = bind(receiver, ip"127.0.0.1", 1234)
-    index = 1
+    # index = 1
     if connected
 		println("Market data listener connected")
 		try
 			while true
 	            message = String(recv(receiver))
 				UpdateLOBState!(LOB, message)
-                UpdateMovingAverage!(LOB, MA, index)
-                index += 1
+                # UpdateMovingAverage!(LOB, MA, index)
+                # index += 1
 	        end
 		finally
 			close(receiver)
@@ -269,8 +269,9 @@ end
 #----- Simulation -----#
 function InjectSimulation(data; seed = 1, parameters = parameters)
 	Random.seed!(seed)
+    StartJVM()
     gateway = Login(1, 1)
-	LOB = LOBState(10, 0, 50, 40, 60, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
+	LOB = LOBState(20, 0, 100, 90, 100, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
     MA = MovingAverage(parameters.m₀, [Millisecond(0); decisionTimes.RelativeTime], mean(diff(Dates.value.([Millisecond(0); decisionTimes.RelativeTime]))))
 	@async Listen(LOB)
     try # This ensures that the client gets logged out whether an error occurs or not
@@ -292,12 +293,12 @@ function InjectSimulation(data; seed = 1, parameters = parameters)
 					if order.volume != 0
 						SubmitOrder(gateway, order)
 					end
-				else # Fundamentalist
-					FundamentalistAction!(...)
-					data[i, :Time] <= Time(now()) ? println(string("Timeout: ", Time(now()) - data[i, :Time])) : sleep(data[i, :Time] - Time(now()))
-					if order.volume != 0
-						SubmitOrder(gateway, order)
-					end
+				# else # Fundamentalist
+				# 	FundamentalistAction!(...)
+				# 	data[i, :Time] <= Time(now()) ? println(string("Timeout: ", Time(now()) - data[i, :Time])) : sleep(data[i, :Time] - Time(now()))
+				# 	if order.volume != 0
+				# 		SubmitOrder(gateway, order)
+				# 	end
 				end
                 @info "Trading" progress=(data.RelativeTime[i] / data.RelativeTime[end]) _id=id # Update progress
             end
@@ -317,3 +318,8 @@ end
 # Logout(client)
 # StopCoinTossX()
 #---------------------------------------------------------------------------------------------------
+#=
+StartCoinTossX(build = false)
+InjectSimulation(decisionTimes)
+StopCoinTossX()
+=#
