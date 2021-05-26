@@ -23,6 +23,7 @@ struct Parameters
     λᴴmax::Float64 # Maximum inter-arrival rate parameter for high-frequency agents
     δ::Float64 # Upper cut-off for LF agents decision rule
     m₀::Float64 # Initial mid-price
+    σ::Float64 # Variance in Normal for log-normal for fundamental value
     T::Millisecond # Simulation time
 end
 mutable struct LimitOrder
@@ -89,8 +90,7 @@ function InitializeAgents(parameters::Parameters)
 		actionTimes = AgentTimes(parameters.λᴸ, parameters.λᴸmin, parameters.λᴸmax, parameters.T)
 		push!(chartists, Chartist(parameters.m₀, actionTimes, convert(Float64, mean(diff(Dates.value.(actionTimes)))), 1))
 	end
-    # Fundamentalists need to change, because need do the random sampling around value
-	fundamentalists = map(i -> Fundamentalist(parameters.m₀, AgentTimes(parameters.λᴸ, parameters.λᴴmin, parameters.λᴴmax, parameters.T)), 1:parameters.Nᴸᵥ)
+	fundamentalists = map(i -> Fundamentalist(parameters.m₀ * exp(rand(Normal(0, parameters.σ))), AgentTimes(parameters.λᴸ, parameters.λᴴmin, parameters.λᴴmax, parameters.T)), 1:parameters.Nᴸᵥ)
     return HFagents, chartists, fundamentalists
 end
 #---------------------------------------------------------------------------------------------------
@@ -123,8 +123,6 @@ function HighFrequencyAgentAction!(order::Order, LOB::LOBState)
 		end
 	end
 end
-#### Q: We should have agentNumber as a param to draw from AgentIndex?
-#### Note: I think I see what you did in the inject sim function. We should remove [agentNumber] from code below then?
 function ChartistAction!(order::Order, LOB::LOBState, chartist::Chartist, parameters::Parameters)
     # Update the agent's EWMA
     Δt = chartist.actionTimes[chartist.orderNumber + 1] - chartist.actionTimes[chartist.orderNumber] # Inter-arrival
@@ -132,13 +130,13 @@ function ChartistAction!(order::Order, LOB::LOBState, chartist::Chartist, parame
     chartist.p̄ₜ += λ * (LOB.mₜ - chartist.p̄ₜ)
     if !(abs(LOB.mₜ - chartist.p̄ₜ) <= LOB.sₜ) # Check if agent performs action
 		# Determine the lower volume bound based on agent decision rule
-	    if LOB.sₜ < abs(LOB.mₜ - chartists[agentNumber].p̄ₜ) <= (parameters.δ * LOB.mₜ)
+	    if LOB.sₜ < abs(LOB.mₜ - chartist.p̄ₜ) <= (parameters.δ * LOB.mₜ)
 	        xₘ = 20
 	    end
-	    if abs(LOB.mₜ - chartists[agentNumber].p̄ₜ) > (parameters.δ * LOB.mₜ)
+	    if abs(LOB.mₜ - chartist.p̄ₜ) > (parameters.δ * LOB.mₜ)
 	        xₘ = 50
 	    end
-	    order.side = LOB.mₜ < chartists[agentNumber].p̄ₜ ? "Sell" : "Buy"
+	    order.side = LOB.mₜ < chartist.p̄ₜ ? "Sell" : "Buy"
 	    α = order.side == "Sell" ? 1 - LOB.ρₜ : 1 + LOB.ρₜ
 	    order.volume = round(Int, PowerLaw(xₘ, α))
     end
@@ -147,13 +145,13 @@ end
 function FundamentalistAction!(order::Order, LOB::LOBState, fundamentalists::Fundamentalist, parameters::Parameters)
     if !(abs(LOB.mₜ - fundamentalists[agentNumber].fₜ) <= LOB.sₜ) # Check if agent performs action
         # Determine the lower volume bound based on agent decision rule
-        if LOB.sₜ < abs(LOB.mₜ - fundamentalists[agentNumber].fₜ) <= (parameters.δ * LOB.mₜ)
+        if LOB.sₜ < abs(LOB.mₜ - fundamentalists.fₜ) <= (parameters.δ * LOB.mₜ)
 	        xₘ = 20
 	    end
-	    if abs(LOB.mₜ - fundamentalists[agentNumber].fₜ) > (parameters.δ * LOB.mₜ)
+	    if abs(LOB.mₜ - fundamentalists.fₜ) > (parameters.δ * LOB.mₜ)
 	        xₘ = 50
 	    end
-        order.side = fundamentalists[agentNumber].fₜ < LOB.mₜ ? "Sell" : "Buy"
+        order.side = fundamentalists.fₜ < LOB.mₜ ? "Sell" : "Buy"
         α = order.side == "Sell" ? 1 - LOB.ρₜ : 1 + LOB.ρₜ
 	    order.volume = round(Int, PowerLaw(xₘ, α))
     end
@@ -216,7 +214,7 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Preset agent decision times -----#
-parameters = Parameters(10, 10, 50, 20, 15, 10, 40, 10, 40, 0.05, 100, Millisecond(500 * 1000)) # Initialize parameters
+parameters = Parameters(10, 10, 50, 20, 15, 10, 40, 10, 40, 0.05, 100, 0.2, Millisecond(500 * 1000)) # Initialize parameters
 (HFagents, chartists, fundamentalists) = InitializeAgents(parameters) # Initialize the agents
 function CreateAgentDecisions(parameters::Parameters, HFagents::Vector{HighFrequency}, chartists::Vector{Chartist}, fundamentalists::Vector{Fundamentalist}) # Initialize decision times
 	decisionTimes = DataFrame(RelativeTime = Vector{Millisecond}(), Order = Vector{Order}(), AgentType = Vector{Symbol}(), AgentIndex = Vector{Int64}())
@@ -246,7 +244,6 @@ function CreateAgentDecisions(parameters::Parameters, HFagents::Vector{HighFrequ
     return decisionTimes
 end
 decisionTimes = CreateAgentDecisions(parameters, HFagents, chartists, fundamentalists)
-MA = MovingAverage(parameters.m₀, [Millisecond(0); decisionTimes.RelativeTime], mean(diff(Dates.value.([Millisecond(0); decisionTimes.RelativeTime]))))
 #---------------------------------------------------------------------------------------------------
 
 #----- Supplementary functions -----#
@@ -270,10 +267,11 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Simulation -----#
-function InjectSimulation(data; seed = 1, MA = MA)
+function InjectSimulation(data; seed = 1, parameters = parameters)
 	Random.seed!(seed)
     gateway = Login(1, 1)
 	LOB = LOBState(10, 0, 50, 40, 60, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
+    MA = MovingAverage(parameters.m₀, [Millisecond(0); decisionTimes.RelativeTime], mean(diff(Dates.value.([Millisecond(0); decisionTimes.RelativeTime]))))
 	@async Listen(LOB)
     try # This ensures that the client gets logged out whether an error occurs or not
         data.Time = data.RelativeTime .+ Time(now())
