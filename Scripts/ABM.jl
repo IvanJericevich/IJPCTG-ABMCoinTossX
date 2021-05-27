@@ -22,6 +22,8 @@ struct Parameters
     λᴴmin::Float64 # Minimum inter-arrival rate parameter for high-frequency agents
     λᴴmax::Float64 # Maximum inter-arrival rate parameter for high-frequency agents
     δ::Float64 # Upper cut-off for LF agents decision rule
+    κ::Float64 # Scaling factor for order placement depth
+    ν::Float64 # Scaling factor for power law order size
     m₀::Float64 # Initial mid-price
     σ::Float64 # Variance in Normal for log-normal for fundamental value
     T::Millisecond # Simulation time
@@ -101,17 +103,19 @@ function HighFrequencyAgentAction!(order::Order, LOB::LOBState)
 		θ = LOB.ρₜ/2 + .5 # Probability of placing an ask
 	    order.side = rand() < θ ? "Sell" : "Buy"
 	    if order.side == "Sell"
-	        α = 1 - LOB.ρₜ # Shape for power law
-	        λₜ = LOB.sₜ / exp(- LOB.ρₜ / 2) # Placement depth parameter
+	        α = 1 - (LOB.ρₜ/parameters.ν) # Shape for power law
+	        λₜ = LOB.sₜ / exp(- LOB.ρₜ / parameters.κ) # Placement depth parameter
 	        η = floor(- λₜ * log(rand()))
 	        order.price = LOB.bₜ + 1 + η
 	        order.volume = round(Int, PowerLaw(10, α))
+            order.displayVolume = order.volume
 	    else
-	        α = 1 + LOB.ρₜ
-	        λₜ = LOB.sₜ / exp(LOB.ρₜ / 2)
+	        α = 1 + (LOB.ρₜ/parameters.ν)
+	        λₜ = LOB.sₜ / exp(LOB.ρₜ / parameters.κ)
 	        η = floor(- λₜ * log(rand()))
 	        order.price = LOB.aₜ - 1 - η
 	        order.volume = round(Int, PowerLaw(10, α))
+            order.displayVolume = order.volume
 	    end
 	else
 		if haskey(LOB.bids, order.orderId)
@@ -125,7 +129,7 @@ function HighFrequencyAgentAction!(order::Order, LOB::LOBState)
 end
 function ChartistAction!(order::Order, LOB::LOBState, chartist::Chartist, parameters::Parameters)
     # Update the agent's EWMA
-    Δt = chartist.actionTimes[chartist.orderNumber + 1] - chartist.actionTimes[chartist.orderNumber] # Inter-arrival
+    Δt = Dates.value(chartist.actionTimes[chartist.orderNumber + 1]) - Dates.value(chartist.actionTimes[chartist.orderNumber]) # Inter-arrival
     λ = 1 - exp(- Δt / chartist.τ) # Decay for low-pass filter
     chartist.p̄ₜ += λ * (LOB.mₜ - chartist.p̄ₜ)
     if !(abs(LOB.mₜ - chartist.p̄ₜ) <= LOB.sₜ) # Check if agent performs action
@@ -137,13 +141,13 @@ function ChartistAction!(order::Order, LOB::LOBState, chartist::Chartist, parame
 	        xₘ = 50
 	    end
 	    order.side = LOB.mₜ < chartist.p̄ₜ ? "Sell" : "Buy"
-	    α = order.side == "Sell" ? 1 - LOB.ρₜ : 1 + LOB.ρₜ
+	    α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
 	    order.volume = round(Int, PowerLaw(xₘ, α))
     end
     chartist.orderNumber += 1
 end
 function FundamentalistAction!(order::Order, LOB::LOBState, fundamentalists::Fundamentalist, parameters::Parameters)
-    if !(abs(LOB.mₜ - fundamentalists[agentNumber].fₜ) <= LOB.sₜ) # Check if agent performs action
+    if !(abs(LOB.mₜ - fundamentalists.fₜ) <= LOB.sₜ) # Check if agent performs action
         # Determine the lower volume bound based on agent decision rule
         if LOB.sₜ < abs(LOB.mₜ - fundamentalists.fₜ) <= (parameters.δ * LOB.mₜ)
 	        xₘ = 20
@@ -152,7 +156,7 @@ function FundamentalistAction!(order::Order, LOB::LOBState, fundamentalists::Fun
 	        xₘ = 50
 	    end
         order.side = fundamentalists.fₜ < LOB.mₜ ? "Sell" : "Buy"
-        α = order.side == "Sell" ? 1 - LOB.ρₜ : 1 + LOB.ρₜ
+        α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
 	    order.volume = round(Int, PowerLaw(xₘ, α))
     end
 end
@@ -193,7 +197,7 @@ function UpdateLOBState!(LOB::LOBState, message)
             end
         end
     end
-	totalBuyVolume = totalSellVolume = 0
+	totalBuyVolume = 0; totalSellVolume = 0
 	if !isempty(LOB.bids) && !isempty(LOB.asks)
 		LOB.bₜ = maximum(order -> order.price, values(LOB.bids)); LOB.aₜ = minimum(order -> order.price, values(LOB.asks))
 		totalBuyVolume = sum(order.volume for order in values(LOB.bids)); totalSellVolume = sum(order.volume for order in values(LOB.asks))
@@ -213,8 +217,28 @@ function UpdateLOBState!(LOB::LOBState, message)
 end
 #---------------------------------------------------------------------------------------------------
 
+#----- Supplementary functions -----#
+function PowerLaw(xₘ, α) # Volumes
+    return xₘ / (rand() ^ (1 / α))
+end
+function rexp(θ, θmin, θmax)
+    return rand(Distributions.truncated(Exponential(θ), θmin, θmax))
+end
+function AgentTimes(θ, θmin, θmax, T)
+    t = Vector{Millisecond}()
+    counter = Millisecond(0)
+    push!(t, counter)
+    while counter < T
+        τ = Millisecond(round(Int, rexp(θ, θmin, θmax) * 1000))
+        counter += τ
+        push!(t, counter)
+    end
+    return t
+end
+#---------------------------------------------------------------------------------------------------
+
 #----- Preset agent decision times -----#
-parameters = Parameters(10, 10, 50, 20, 15, 10, 40, 10, 40, 0.05, 100, 0.2, Millisecond(500 * 1000)) # Initialize parameters
+parameters = Parameters(10, 10, 25, 20, 15, 10, 40, 10, 40, 0.05, 2, 2, 100, 0.2, Millisecond(500 * 1000)) # Initialize parameters
 (HFagents, chartists, fundamentalists) = InitializeAgents(parameters) # Initialize the agents
 function CreateAgentDecisions(parameters::Parameters, HFagents::Vector{HighFrequency}, chartists::Vector{Chartist}, fundamentalists::Vector{Fundamentalist}) # Initialize decision times
 	decisionTimes = DataFrame(RelativeTime = Vector{Millisecond}(), Order = Vector{Order}(), AgentType = Vector{Symbol}(), AgentIndex = Vector{Int64}())
@@ -246,26 +270,6 @@ end
 decisionTimes = CreateAgentDecisions(parameters, HFagents, chartists, fundamentalists)
 #---------------------------------------------------------------------------------------------------
 
-#----- Supplementary functions -----#
-function PowerLaw(xₘ, α) # Volumes
-    return xₘ / (rand() ^ (1 / α))
-end
-function rexp(θ, θmin, θmax)
-    return rand(Distributions.truncated(Exponential(θ), θmin, θmax))
-end
-function AgentTimes(θ, θmin, θmax, T)
-    t = Vector{Millisecond}()
-    counter = Millisecond(0)
-    push!(t, counter)
-    while counter < T
-        τ = Millisecond(round(Int, rexp(θ, θmin, θmax) * 1000))
-        counter += τ
-        push!(t, counter)
-    end
-    return t
-end
-#---------------------------------------------------------------------------------------------------
-
 #----- Simulation -----#
 function InjectSimulation(data; seed = 1, parameters = parameters)
 	Random.seed!(seed)
@@ -273,37 +277,55 @@ function InjectSimulation(data; seed = 1, parameters = parameters)
     gateway = Login(1, 1)
 	LOB = LOBState(20, 0, 100, 90, 100, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
     MA = MovingAverage(parameters.m₀, [Millisecond(0); decisionTimes.RelativeTime], mean(diff(Dates.value.([Millisecond(0); decisionTimes.RelativeTime]))))
-	@async Listen(LOB)
+	# @async Listen(LOB)
+    receiver = UDPSocket()
+    connected = bind(receiver, ip"127.0.0.1", 1234)
+    if connected
+        println("Market data listener connected")
+    end
     try # This ensures that the client gets logged out whether an error occurs or not
         data.Time = data.RelativeTime .+ Time(now())
         Juno.progress() do id # Progress bar
             for i in 1:nrow(data)
 				order = data[i, :Order]
+                messagesent = false
 				if data[i, :AgentType] == :HF # High-frequency
 					HighFrequencyAgentAction!(order, LOB)
 					data[i, :Time] <= Time(now()) ? println(string("Timeout: ", Time(now()) - data[i, :Time])) : sleep(data[i, :Time] - Time(now()))
 					if order.type == "Limit" # Limit order
 	                    SubmitOrder(gateway, order)
+                        messagesent = true
 	                elseif order.type == "Cancel" && order.price != 0 # Order cancel
 	                    CancelOrder(gateway, order)
+                        messagesent = true
 	                end
 				elseif data[i, :AgentType] == :TF # Chartist
 					ChartistAction!(order, LOB, chartists[data[i, :AgentIndex]], parameters)
 					data[i, :Time] <= Time(now()) ? println(string("Timeout: ", Time(now()) - data[i, :Time])) : sleep(data[i, :Time] - Time(now()))
 					if order.volume != 0
 						SubmitOrder(gateway, order)
+                        messagesent = true
 					end
-				# else # Fundamentalist
-				# 	FundamentalistAction!(...)
-				# 	data[i, :Time] <= Time(now()) ? println(string("Timeout: ", Time(now()) - data[i, :Time])) : sleep(data[i, :Time] - Time(now()))
-				# 	if order.volume != 0
-				# 		SubmitOrder(gateway, order)
-				# 	end
+				else # Fundamentalist
+					FundamentalistAction!(order, LOB, fundamentalists[data[i, :AgentIndex]], parameters)
+					data[i, :Time] <= Time(now()) ? println(string("Timeout: ", Time(now()) - data[i, :Time])) : sleep(data[i, :Time] - Time(now()))
+					if order.volume != 0
+						SubmitOrder(gateway, order)
+                        messagesent = true
+					end
 				end
+                if messagesent == true
+                    message = String(recv(receiver))
+                    println(message)
+                    UpdateLOBState!(LOB, message)
+                    println(LOB.sₜ)
+                    println(LOB.ρₜ)
+                end
                 @info "Trading" progress=(data.RelativeTime[i] / data.RelativeTime[end]) _id=id # Update progress
             end
         end
     finally
+        close(receiver)
         Logout(gateway)
     end
 end
@@ -323,3 +345,6 @@ StartCoinTossX(build = false)
 InjectSimulation(decisionTimes)
 StopCoinTossX()
 =#
+StartCoinTossX(build = false)
+InjectSimulation(decisionTimes)
+StopCoinTossX()
