@@ -128,40 +128,40 @@ function HighFrequencyAgentAction!(order::Order, LOB::LOBState)
 	end
 end
 function ChartistAction!(order::Order, LOB::LOBState, chartist::Chartist, parameters::Parameters)
-	if (order.side == "Buy" && !isempty(LOB.asks)) || (order.side == "Sell" && !isempty(LOB.bids))
-		Δt = Dates.value(chartist.actionTimes[chartist.orderNumber + 1]) - Dates.value(chartist.actionTimes[chartist.orderNumber]) # Inter-arrival
-	    λ = 1 - exp(- Δt / chartist.τ) # Decay for low-pass filter
-	    chartist.p̄ₜ += λ * (LOB.mₜ - chartist.p̄ₜ)
-	    if !(abs(LOB.mₜ - chartist.p̄ₜ) <= LOB.sₜ) # Check if agent performs action
-			# Determine the lower volume bound based on agent decision rule
-		    if LOB.sₜ < abs(LOB.mₜ - chartist.p̄ₜ) <= (parameters.δ * LOB.mₜ)
-		        xₘ = 20
-		    end
-		    if abs(LOB.mₜ - chartist.p̄ₜ) > (parameters.δ * LOB.mₜ)
-		        xₘ = 50
-		    end
-		    order.side = LOB.mₜ < chartist.p̄ₜ ? "Sell" : "Buy"
-		    α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
-		    order.volume = round(Int, PowerLaw(xₘ, α))
-	    end
+    Δt = Dates.value(chartist.actionTimes[chartist.orderNumber + 1]) - Dates.value(chartist.actionTimes[chartist.orderNumber]) # Inter-arrival
+    λ = 1 - exp(- Δt / chartist.τ) # Decay for low-pass filter
+    chartist.p̄ₜ += λ * (LOB.mₜ - chartist.p̄ₜ)
+    if !(abs(LOB.mₜ - chartist.p̄ₜ) <= LOB.sₜ) # Check if agent performs action
+        # Determine the lower volume bound based on agent decision rule
+        if LOB.sₜ < abs(LOB.mₜ - chartist.p̄ₜ) <= (parameters.δ * LOB.mₜ)
+            xₘ = 20
+        end
+        if abs(LOB.mₜ - chartist.p̄ₜ) > (parameters.δ * LOB.mₜ)
+            xₘ = 50
+        end
+        order.side = LOB.mₜ < chartist.p̄ₜ ? "Sell" : "Buy"
+        α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
+    end
+	if (order.side == "Buy" && !isempty(LOB.asks)) || (order.side == "Sell" && !isempty(LOB.bids)) # Agent won't submit MO if no orders on contra side
+		order.volume = round(Int, PowerLaw(xₘ, α))
 	end
     # Update the agent's EWMA
     chartist.orderNumber += 1
 end
 function FundamentalistAction!(order::Order, LOB::LOBState, fundamentalists::Fundamentalist, parameters::Parameters)
+    if !(abs(LOB.mₜ - fundamentalists.fₜ) <= LOB.sₜ) # Check if agent performs action
+        # Determine the lower volume bound based on agent decision rule
+        if LOB.sₜ < abs(LOB.mₜ - fundamentalists.fₜ) <= (parameters.δ * LOB.mₜ)
+            xₘ = 20
+        end
+        if abs(LOB.mₜ - fundamentalists.fₜ) > (parameters.δ * LOB.mₜ)
+            xₘ = 50
+        end
+        order.side = fundamentalists.fₜ < LOB.mₜ ? "Sell" : "Buy"
+        α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
+    end
 	if (order.side == "Buy" && !isempty(LOB.asks)) || (order.side == "Sell" && !isempty(LOB.bids))
-		if !(abs(LOB.mₜ - fundamentalists.fₜ) <= LOB.sₜ) # Check if agent performs action
-	        # Determine the lower volume bound based on agent decision rule
-	        if LOB.sₜ < abs(LOB.mₜ - fundamentalists.fₜ) <= (parameters.δ * LOB.mₜ)
-		        xₘ = 20
-		    end
-		    if abs(LOB.mₜ - fundamentalists.fₜ) > (parameters.δ * LOB.mₜ)
-		        xₘ = 50
-		    end
-	        order.side = fundamentalists.fₜ < LOB.mₜ ? "Sell" : "Buy"
-	        α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
-		    order.volume = round(Int, PowerLaw(xₘ, α))
-	    end
+        order.volume = round(Int, PowerLaw(xₘ, α))
 	end
 end
 #---------------------------------------------------------------------------------------------------
@@ -244,7 +244,7 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Preset agent decision times -----#
-parameters = Parameters(10, 10, 25, 20, 15, 10, 40, 10, 40, 0.05, 2, 2, 100, 0.2, Millisecond(500 * 1000)) # Initialize parameters
+parameters = Parameters(10, 10, 20, 20, 15, 10, 40, 10, 40, 0.05, 2, 2, 100, 0.2, Millisecond(500 * 1000)) # Initialize parameters
 (HFagents, chartists, fundamentalists) = InitializeAgents(parameters) # Initialize the agents
 function CreateAgentDecisions(parameters::Parameters, HFagents::Vector{HighFrequency}, chartists::Vector{Chartist}, fundamentalists::Vector{Fundamentalist}) # Initialize decision times
 	decisionTimes = DataFrame(RelativeTime = Vector{Millisecond}(), Order = Vector{Order}(), AgentType = Vector{Symbol}(), AgentIndex = Vector{Int64}())
@@ -354,3 +354,4 @@ StopCoinTossX()
 StartCoinTossX(build = false)
 InjectSimulation(decisionTimes)
 StopCoinTossX()
+exit()
