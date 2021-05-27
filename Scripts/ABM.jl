@@ -176,44 +176,46 @@ function UpdateLOBState!(LOB::LOBState, message)
 	fields = split(msg[1], ",")
     type = Symbol(fields[1]); side = Symbol(fields[2]); trader = Symbol(fields[3])
     executions = msg[2:end]
-    for execution in executions
-        executionFields = split(execution, ",")
-        id = parse(Int, executionFields[1]); price = parse(Int, executionFields[2]); volume = parse(Int, executionFields[3])
-        if type == :New
-            side == :Buy ? push!(LOB.bids, id => LimitOrder(price, volume, trader)) : push!(LOB.asks, id => LimitOrder(price, volume, trader))
-        elseif type == :Cancelled
-            side == :Buy ? delete!(LOB.bids, id) : delete!(LOB.asks, id)
-        elseif type == :Trade
-            if side == :Buy
-                LOB.asks[id].volume -= volume
-                if LOB.asks[id].volume == 0
-                    delete!(LOB.asks, id)
-                end
-            else
-                LOB.bids[id].volume -= volume
-                if LOB.bids[id].volume == 0
-                    delete!(LOB.bids, id)
-                end
-            end
-        end
-    end
-	totalBuyVolume = 0; totalSellVolume = 0
-	if !isempty(LOB.bids) && !isempty(LOB.asks)
-		LOB.bₜ = maximum(order -> order.price, values(LOB.bids)); LOB.aₜ = minimum(order -> order.price, values(LOB.asks))
-		totalBuyVolume = sum(order.volume for order in values(LOB.bids)); totalSellVolume = sum(order.volume for order in values(LOB.asks))
-	else
-		if !isempty(LOB.bids)
-			LOB.bₜ = maximum(order -> order.price, values(LOB.bids))
-			totalBuyVolume = sum(order.volume for order in values(LOB.bids))
+	if executions != ""
+		for execution in executions
+	        executionFields = split(execution, ",")
+	        id = parse(Int, executionFields[1]); price = parse(Int, executionFields[2]); volume = parse(Int, executionFields[3])
+	        if type == :New
+	            side == :Buy ? push!(LOB.bids, id => LimitOrder(price, volume, trader)) : push!(LOB.asks, id => LimitOrder(price, volume, trader))
+	        elseif type == :Cancelled
+	            side == :Buy ? delete!(LOB.bids, id) : delete!(LOB.asks, id)
+	        elseif type == :Trade
+	            if side == :Buy
+	                LOB.asks[id].volume -= volume
+	                if LOB.asks[id].volume == 0
+	                    delete!(LOB.asks, id)
+	                end
+	            else
+	                LOB.bids[id].volume -= volume
+	                if LOB.bids[id].volume == 0
+	                    delete!(LOB.bids, id)
+	                end
+	            end
+	        end
+	    end
+		totalBuyVolume = 0; totalSellVolume = 0
+		if !isempty(LOB.bids) && !isempty(LOB.asks)
+			LOB.bₜ = maximum(order -> order.price, values(LOB.bids)); LOB.aₜ = minimum(order -> order.price, values(LOB.asks))
+			totalBuyVolume = sum(order.volume for order in values(LOB.bids)); totalSellVolume = sum(order.volume for order in values(LOB.asks))
+		else
+			if !isempty(LOB.bids)
+				LOB.bₜ = maximum(order -> order.price, values(LOB.bids))
+				totalBuyVolume = sum(order.volume for order in values(LOB.bids))
+			end
+			if !isempty(LOB.asks)
+				LOB.aₜ = minimum(order -> order.price, values(LOB.asks))
+				totalSellVolume = sum(order.volume for order in values(LOB.asks))
+			end
 		end
-		if !isempty(LOB.asks)
-			LOB.aₜ = minimum(order -> order.price, values(LOB.asks))
-			totalSellVolume = sum(order.volume for order in values(LOB.asks))
-		end
+		LOB.sₜ = abs(LOB.aₜ - LOB.bₜ)
+		LOB.mₜ = (LOB.aₜ + LOB.bₜ) / 2
+	    LOB.ρₜ = (totalBuyVolume == 0) && (totalSellVolume == 0) ? 0.0 : (totalBuyVolume - totalSellVolume) / (totalBuyVolume + totalSellVolume)
 	end
-	LOB.sₜ = abs(LOB.aₜ - LOB.bₜ)
-	LOB.mₜ = (LOB.aₜ + LOB.bₜ) / 2
-    LOB.ρₜ = (totalBuyVolume == 0) && (totalSellVolume == 0) ? 0.0 : (totalBuyVolume - totalSellVolume) / (totalBuyVolume + totalSellVolume)
 end
 #---------------------------------------------------------------------------------------------------
 
