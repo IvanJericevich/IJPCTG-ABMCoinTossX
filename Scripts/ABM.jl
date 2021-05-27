@@ -128,37 +128,41 @@ function HighFrequencyAgentAction!(order::Order, LOB::LOBState)
 	end
 end
 function ChartistAction!(order::Order, LOB::LOBState, chartist::Chartist, parameters::Parameters)
+	if (order.side == "Buy" && !isempty(LOB.asks)) || (order.side == "Sell" && !isempty(LOB.bids))
+		Δt = Dates.value(chartist.actionTimes[chartist.orderNumber + 1]) - Dates.value(chartist.actionTimes[chartist.orderNumber]) # Inter-arrival
+	    λ = 1 - exp(- Δt / chartist.τ) # Decay for low-pass filter
+	    chartist.p̄ₜ += λ * (LOB.mₜ - chartist.p̄ₜ)
+	    if !(abs(LOB.mₜ - chartist.p̄ₜ) <= LOB.sₜ) # Check if agent performs action
+			# Determine the lower volume bound based on agent decision rule
+		    if LOB.sₜ < abs(LOB.mₜ - chartist.p̄ₜ) <= (parameters.δ * LOB.mₜ)
+		        xₘ = 20
+		    end
+		    if abs(LOB.mₜ - chartist.p̄ₜ) > (parameters.δ * LOB.mₜ)
+		        xₘ = 50
+		    end
+		    order.side = LOB.mₜ < chartist.p̄ₜ ? "Sell" : "Buy"
+		    α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
+		    order.volume = round(Int, PowerLaw(xₘ, α))
+	    end
+	end
     # Update the agent's EWMA
-    Δt = Dates.value(chartist.actionTimes[chartist.orderNumber + 1]) - Dates.value(chartist.actionTimes[chartist.orderNumber]) # Inter-arrival
-    λ = 1 - exp(- Δt / chartist.τ) # Decay for low-pass filter
-    chartist.p̄ₜ += λ * (LOB.mₜ - chartist.p̄ₜ)
-    if !(abs(LOB.mₜ - chartist.p̄ₜ) <= LOB.sₜ) # Check if agent performs action
-		# Determine the lower volume bound based on agent decision rule
-	    if LOB.sₜ < abs(LOB.mₜ - chartist.p̄ₜ) <= (parameters.δ * LOB.mₜ)
-	        xₘ = 20
-	    end
-	    if abs(LOB.mₜ - chartist.p̄ₜ) > (parameters.δ * LOB.mₜ)
-	        xₘ = 50
-	    end
-	    order.side = LOB.mₜ < chartist.p̄ₜ ? "Sell" : "Buy"
-	    α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
-	    order.volume = round(Int, PowerLaw(xₘ, α))
-    end
     chartist.orderNumber += 1
 end
 function FundamentalistAction!(order::Order, LOB::LOBState, fundamentalists::Fundamentalist, parameters::Parameters)
-    if !(abs(LOB.mₜ - fundamentalists.fₜ) <= LOB.sₜ) # Check if agent performs action
-        # Determine the lower volume bound based on agent decision rule
-        if LOB.sₜ < abs(LOB.mₜ - fundamentalists.fₜ) <= (parameters.δ * LOB.mₜ)
-	        xₘ = 20
+	if (order.side == "Buy" && !isempty(LOB.asks)) || (order.side == "Sell" && !isempty(LOB.bids))
+		if !(abs(LOB.mₜ - fundamentalists.fₜ) <= LOB.sₜ) # Check if agent performs action
+	        # Determine the lower volume bound based on agent decision rule
+	        if LOB.sₜ < abs(LOB.mₜ - fundamentalists.fₜ) <= (parameters.δ * LOB.mₜ)
+		        xₘ = 20
+		    end
+		    if abs(LOB.mₜ - fundamentalists.fₜ) > (parameters.δ * LOB.mₜ)
+		        xₘ = 50
+		    end
+	        order.side = fundamentalists.fₜ < LOB.mₜ ? "Sell" : "Buy"
+	        α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
+		    order.volume = round(Int, PowerLaw(xₘ, α))
 	    end
-	    if abs(LOB.mₜ - fundamentalists.fₜ) > (parameters.δ * LOB.mₜ)
-	        xₘ = 50
-	    end
-        order.side = fundamentalists.fₜ < LOB.mₜ ? "Sell" : "Buy"
-        α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
-	    order.volume = round(Int, PowerLaw(xₘ, α))
-    end
+	end
 end
 #---------------------------------------------------------------------------------------------------
 
@@ -176,7 +180,7 @@ function UpdateLOBState!(LOB::LOBState, message)
 	fields = split(msg[1], ",")
     type = Symbol(fields[1]); side = Symbol(fields[2]); trader = Symbol(fields[3])
     executions = msg[2:end]
-	if executions != ""
+	if executions[1] != ""
 		for execution in executions
 	        executionFields = split(execution, ",")
 	        id = parse(Int, executionFields[1]); price = parse(Int, executionFields[2]); volume = parse(Int, executionFields[3])
