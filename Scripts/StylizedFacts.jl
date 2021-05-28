@@ -25,19 +25,46 @@ using Distributions, CSV, Plots, DataFrames, StatsPlots, Dates, StatsBase, LaTeX
 clearconsole()
 #---------------------------------------------------------------------------------------------------
 
+#----- Extract OHLCV data -----#
+function OHLCV(lobFile::DataFrame, resolution)
+    l1lob = CSV.File(string("Data/", lobFile, ".csv"), drop = [:Price, :Side, :Spread], missingstring = "missing") |> DataFrame
+    barTimes = l1lob.DateTime[1]:resolution:l1lob.DateTime[end]
+    open(string("Data/OHLCV.csv"), "w") do file
+        println(file, "DateTime,MidOpen,MidHigh,MidLow,MidClose,MicroOpen,MicroHigh,MicroLow,MicroClose,Volume,VWAP")
+        for t in 1:(length(barTimes) - 1)
+            startIndex = searchsortedfirst(l1lob.DateTime, barTimes[t])
+            endIndex = searchsortedlast(l1lob.DateTime, barTimes[t + 1])
+            if !(startIndex >= endIndex)
+                bar = l1lob[startIndex:endIndex, :]
+                tradesBar = filter(x -> x.Type == :Market, bar)
+                midPriceOHLCV = string(bar.MidPrice[1], ",", maximum(skipmissing(bar.MidPrice)), ",", minimum(skipmissing(bar.MidPrice)), ",", bar.MidPrice[end])
+                microPriceOHLCV = string(bar.MicroPrice[1], ",", maximum(skipmissing(bar.MicroPrice)), ",", minimum(skipmissing(bar.MicroPrice)), ",", bar.MicroPrice[end])
+                vwap = !isempty(tradesBar) ? sum(tradesBar.Volume .* tradesBar.Price) / sum(tradesBar.Volume) : missing
+                println(file, string(barTimes[t], ",", midPriceOHLCV, ",", microPriceOHLCV, ",", sum(bar.Volume), ",", vwap))
+            end
+        end
+    end
+end
+#---------------------------------------------------------------------------------------------------
+
 #----- Log return sample distributions for different time resolutions -----#
 function LogReturnDistribution(resolution::Symbol; lobFile::String, cummulative::Bool = false, format::String = "pdf")
     # Obtain log-returns of price series
-    data = resolution == :TickbyTick ? CSV.File(string("Data/", lobFile, ".csv"), missingstring = "missing") |> DataFrame : CSV.File(string("Data/MicroPrice ", resolution, " Bars.csv"), missingstring = "missing")
-    logReturns = resolution == :TickbyTick ? diff(log.(filter(x -> !ismissing(x), data[:, :MidPrice]))) : diff(log.(filter(x -> !ismissing(x), data[:, :Close])))
+    if resolution == :TickbyTick
+        data = CSV.File(string("Data/", lobFile, ".csv"), missingstring = "missing") |> DataFrame
+        logReturns = diff(log.(filter(x -> !ismissing(x), data[:, :MidPrice])))
+    else
+        data = CSV.File(string("Data/MicroPrice ", resolution, " Bars.csv"), missingstring = "missing") |> DataFrame
+        logReturns = diff(log.(filter(x -> !ismissing(x), data[:, :Close])))
+    end
     # Fit theoretical distributions
     theoreticalDistribution = fit(Normal, logReturns)
     if cummulative
         # Plot empirical distribution
         empiricalDistribution = bar(logReturns, func = cdf, fillcolor = :blue, linecolor = :blue, xlabel = "Log returns", ylabel = "Density", label = "Empirical", legendtitle = "Distribution")
         # Plot fitted theoretical distributions
-        plot!(empiricalDistribution, cdf(theoreticalDistribution, logReturns), linecolor = :black, label = "Fitted Normal")
-        savefig(empiricalDistribution, string("Log-ReturnCummulativeDistribution", resolution, ".", format))
+        plot!(empiricalDistribution, cdf.(theoreticalDistribution, logReturns), linecolor = :black, label = "Fitted Normal")
+        savefig(empiricalDistribution, string("Figures/Log-ReturnCummulativeDistribution", resolution, ".", format))
     else
         # Plot empirical distribution
         empiricalDistribution = histogram(logReturns, normalize = :pdf, fillcolor = :blue, linecolor = :blue, xlabel = "Log returns", ylabel = "Density", label = "Empirical", legendtitle = "Empirical Distribution", legend = :bottomright)
@@ -161,17 +188,7 @@ function VPIN(data, V, n, resolution)
 end
 #---------------------------------------------------------------------------------------------------
 
-
 #----- Extract price-impact data -----#
-#=
-Function:
-    - Extract raw impacts and normalized volumes
-    - This relates to a single security/model over multiple simulation periods
-Arguments:
-    - files = L1LOB file names that relate to a single model/security
-Output:
-    - Buyer-initiated and seller-initiated price impacts and nomralized volumes as well as the average daily value traded
-=#
 function PriceImpact(file::String)
     data = CSV.File(string("Data/", file, ".csv"), drop = [:MicroPrice, :Spread, :Imbalance], types = Dict(:Type => Symbol, :Price => Int64, :Volume => Int64, :MidPrice => Float64), missingstring = "missing") |> DataFrame
     tradeIndeces = findall(x -> x == :MO, data.Type); totalTradeCount = length(tradeIndeces)
