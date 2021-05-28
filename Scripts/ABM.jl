@@ -25,7 +25,7 @@ struct Parameters
     κ::Float64 # Scaling factor for order placement depth
     ν::Float64 # Scaling factor for power law order size
     m₀::Float64 # Initial mid-price
-    σ::Float64 # Variance in Normal for log-normal for fundamental value
+    σ::Float64 # Std dev in Normal for log-normal for fundamental value
     T::Millisecond # Simulation time
 end
 mutable struct LimitOrder
@@ -98,7 +98,7 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Agent rules -----#
-function HighFrequencyAgentAction!(order::Order, LOB::LOBState)
+function HighFrequencyAgentAction!(order::Order, LOB::LOBState, parameters::Parameters)
 	if order.type == "Limit"
 		θ = LOB.ρₜ/2 + .5 # Probability of placing an ask
 	    order.side = rand() < θ ? "Sell" : "Buy"
@@ -243,9 +243,7 @@ function AgentTimes(θ, θmin, θmax, T)
 end
 #---------------------------------------------------------------------------------------------------
 
-#----- Preset agent decision times -----#
-parameters = Parameters(10, 10, 20, 20, 15, 10, 40, 10, 40, 0.05, 2, 2, 100, 0.2, Millisecond(500 * 1000)) # Initialize parameters
-(HFagents, chartists, fundamentalists) = InitializeAgents(parameters) # Initialize the agents
+#----- Agent decision times -----#
 function CreateAgentDecisions(parameters::Parameters, HFagents::Vector{HighFrequency}, chartists::Vector{Chartist}, fundamentalists::Vector{Fundamentalist}) # Initialize decision times
 	decisionTimes = DataFrame(RelativeTime = Vector{Millisecond}(), Order = Vector{Order}(), AgentType = Vector{Symbol}(), AgentIndex = Vector{Int64}())
 	idCounter = 0
@@ -273,31 +271,39 @@ function CreateAgentDecisions(parameters::Parameters, HFagents::Vector{HighFrequ
     sort!(decisionTimes, :RelativeTime)
     return decisionTimes
 end
-decisionTimes = CreateAgentDecisions(parameters, HFagents, chartists, fundamentalists)
 #---------------------------------------------------------------------------------------------------
 
 #----- Simulation -----#
-function InjectSimulation(data; seed = 1, parameters = parameters)
+function InjectSimulation(param; seed = 1)
+    # Initialize parameter struct
+    parameters = Parameters(param[1], param[2], param[3], param[4], param[5], param[6], param[7], param[8], param[9], param[10], param[11], param[12], param[13], param[14], param[15]) # Initialize parameters
 	Random.seed!(seed)
+    # Initialize the agents
+    (HFagents, chartists, fundamentalists) = InitializeAgents(parameters)
+    # Initialize decision times
+    data = CreateAgentDecisions(parameters, HFagents, chartists, fundamentalists)
+    # Initialize LOB state and MA
+    LOB = LOBState(50, 0, 1000, 975, 1025, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
+    MA = MovingAverage(parameters.m₀, [Millisecond(0); data.RelativeTime], mean(diff(Dates.value.([Millisecond(0); data.RelativeTime]))))
+    # Setup storage for time series of mid-price
+    times = []; midprice = []
+    # Start up JVM, login and setup the listener
     StartJVM()
     gateway = Login(1, 1)
-	LOB = LOBState(20, 0, 100, 90, 100, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
-    MA = MovingAverage(parameters.m₀, [Millisecond(0); decisionTimes.RelativeTime], mean(diff(Dates.value.([Millisecond(0); decisionTimes.RelativeTime]))))
-	# @async Listen(LOB)
     receiver = UDPSocket()
     connected = bind(receiver, ip"127.0.0.1", 1234)
     if connected
         println("Market data listener connected")
     end
     try # This ensures that the client gets logged out whether an error occurs or not
-        data.Time = data.RelativeTime .+ Time(now())
+        data.Time = data.RelativeTime #.+ Time(now())
         Juno.progress() do id # Progress bar
             for i in 1:nrow(data)
 				order = data[i, :Order]
                 messagesent = false
 				if data[i, :AgentType] == :HF # High-frequency
-					HighFrequencyAgentAction!(order, LOB)
-					data[i, :Time] <= Time(now()) ? println(string("Timeout: ", Time(now()) - data[i, :Time])) : sleep(data[i, :Time] - Time(now()))
+					HighFrequencyAgentAction!(order, LOB, parameters)
+					# data[i, :Time] <= Time(now()) ? println(string("Timeout: ", Time(now()) - data[i, :Time])) : sleep(data[i, :Time] - Time(now()))
 					if order.type == "Limit" # Limit order
 	                    SubmitOrder(gateway, order)
                         messagesent = true
@@ -307,14 +313,14 @@ function InjectSimulation(data; seed = 1, parameters = parameters)
 	                end
 				elseif data[i, :AgentType] == :TF # Chartist
 					ChartistAction!(order, LOB, chartists[data[i, :AgentIndex]], parameters)
-					data[i, :Time] <= Time(now()) ? println(string("Timeout: ", Time(now()) - data[i, :Time])) : sleep(data[i, :Time] - Time(now()))
+					# data[i, :Time] <= Time(now()) ? println(string("Timeout: ", Time(now()) - data[i, :Time])) : sleep(data[i, :Time] - Time(now()))
 					if order.volume != 0
 						SubmitOrder(gateway, order)
                         messagesent = true
 					end
 				else # Fundamentalist
 					FundamentalistAction!(order, LOB, fundamentalists[data[i, :AgentIndex]], parameters)
-					data[i, :Time] <= Time(now()) ? println(string("Timeout: ", Time(now()) - data[i, :Time])) : sleep(data[i, :Time] - Time(now()))
+					# data[i, :Time] <= Time(now()) ? println(string("Timeout: ", Time(now()) - data[i, :Time])) : sleep(data[i, :Time] - Time(now()))
 					if order.volume != 0
 						SubmitOrder(gateway, order)
                         messagesent = true
@@ -326,6 +332,8 @@ function InjectSimulation(data; seed = 1, parameters = parameters)
                     UpdateLOBState!(LOB, message)
                     println(LOB.sₜ)
                     println(LOB.ρₜ)
+                    push!(times, data[i, :Time])
+                    push!(midprice, LOB.mₜ)
                 end
                 @info "Trading" progress=(data.RelativeTime[i] / data.RelativeTime[end]) _id=id # Update progress
             end
@@ -334,6 +342,7 @@ function InjectSimulation(data; seed = 1, parameters = parameters)
         close(receiver)
         Logout(gateway)
     end
+    return times, midprice
 end
 #---------------------------------------------------------------------------------------------------
 
@@ -352,6 +361,8 @@ InjectSimulation(decisionTimes)
 StopCoinTossX()
 =#
 StartCoinTossX(build = false)
-InjectSimulation(decisionTimes)
+# InjectSimulation(decisionTimes)
+param = (10, 10, 20, 20, 15, 10, 40, 10, 40, 0.05, 2, 2, 1000, 0.2, Millisecond(500 * 1000))
+x = InjectSimulation(param)
 StopCoinTossX()
 exit()
