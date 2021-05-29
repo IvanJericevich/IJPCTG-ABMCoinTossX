@@ -312,7 +312,7 @@ end
 
 #----- Example -----#
 StartCoinTossX(build = false)
-param = Parameters(10, 20, 15, 20, 20, 10, 40, 10, 40, 0.05, 2, 2, 1000, 0.2, Millisecond(3600 * 1000))
+param = Parameters(10, 25, 15, 20, 20, 10, 40, 10, 40, 0.05, 1.5, 2, 1000, 0.5, Millisecond(3600 * 1000))
 x = InjectSimulation(param; startJVM = true) # First run, must start JVM
 x = InjectSimulation(param) # Next run must be on different security, don't need to start JVM again
 
