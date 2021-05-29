@@ -251,7 +251,7 @@ function CreateAgentDecisions(parameters::Parameters, HFagents::Vector{HighFrequ
         limitTimes = HFagents[i].actionTimes[2:end]
 		limitOrders = map(x -> Order(orderId = idCounter + x, traderMnemonic = string("HF", i), type = "Limit"), 1:length(limitTimes))
 		append!(decisionTimes, DataFrame(RelativeTime = limitTimes, Order = limitOrders, AgentType = :HF, AgentIndex = i)) # Limit orders
-        cancelTimes = filter(x -> x < parameters.T, limitTimes .+ Millisecond(300 * 1000))
+        cancelTimes = filter(x -> x < parameters.T, limitTimes .+ Millisecond(40 * 1000))
 		cancelOrders = map(x -> Order(orderId = idCounter + x, traderMnemonic = string("HF", i), type = "Cancel"), 1:length(cancelTimes))
 	    append!(decisionTimes, DataFrame(RelativeTime = cancelTimes, Order = cancelOrders, AgentType = :HF, AgentIndex = i))
 		idCounter += length(limitTimes)
@@ -274,7 +274,7 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Simulation -----#
-function InjectSimulation(param; seed = 1)
+function InjectSimulation(param; seed = 2)
     # Initialize parameter struct
     parameters = Parameters(param[1], param[2], param[3], param[4], param[5], param[6], param[7], param[8], param[9], param[10], param[11], param[12], param[13], param[14], param[15]) # Initialize parameters
 	Random.seed!(seed)
@@ -362,7 +362,10 @@ StopCoinTossX()
 =#
 StartCoinTossX(build = false)
 # InjectSimulation(decisionTimes)
-param = (10, 10, 20, 20, 15, 10, 40, 10, 40, 0.05, 2, 2, 1000, 0.2, Millisecond(500 * 1000))
+param = (10, 15, 20, 20, 20, 10, 40, 10, 40, 0.05, 2, 2, 1000, 0.2, Millisecond(3600 * 1000))
 x = InjectSimulation(param)
 StopCoinTossX()
 exit()
+##
+using Plots
+plot(Dates.value.(x[1]), x[2])
