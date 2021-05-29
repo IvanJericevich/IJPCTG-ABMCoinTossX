@@ -100,25 +100,6 @@ function CancelOrder(tradingGateway::TradingGateway, order::Order)
 end
 #---------------------------------------------------------------------------------------------------
 
-#----- Receive updates to the best bid/ask -----#
-function ReceiveMarketData(tradingGateway::TradingGateway, side::Symbol, type::Symbol)
-    if side == :Bid
-        data = type == :Price ? jcall(tradingGateway.javaObject, "getBid", jlong, ()) : jcall(tradingGateway.javaObject, "getBidQuantity", jlong, ())
-    elseif side == :Ask
-        data = type == :Price ? jcall(tradingGateway.javaObject, "getOffer", jlong, ()) : jcall(tradingGateway.javaObject, "getOfferQuantity", jlong, ())
-    end
-    return data
-end
-function ReceiveMarketData(tradingGateway::TradingGateway, side::Symbol)
-    best = NamedTuple()
-    if side == :Bid
-        return (Price = jcall(tradingGateway.javaObject, "getBid", jlong, ()), Volume = jcall(tradingGateway.javaObject, "getBidQuantity", jlong, ()))
-    else
-        return (Price = jcall(tradingGateway.javaObject, "getOffer", jlong, ()), Volume = jcall(tradingGateway.javaObject, "getOfferQuantity", jlong, ()))
-    end
-end
-#---------------------------------------------------------------------------------------------------
-
 #----- Destroy client by logging out and ending the trading session -----#
 function Logout(tradingGateway::TradingGateway)
     jcall(tradingGateway.javaObject, "sendEndMessage", Nothing, ())

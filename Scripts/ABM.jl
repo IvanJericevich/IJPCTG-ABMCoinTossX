@@ -1,10 +1,3 @@
-#=
-parameters = Parameters(10, 10, 50, 20, 15, 10, 40, 10, 40, 0.05, Millisecond(500 * 1000))
-decisionTimes = CreateAgentDecisions(parameters, HFagents, chartists, fundamentalists)
-StartCoinTossX()
-InjectSimulation(decisionTimes)
-StopCoinTossX()
-=#
 using Random, Distributions, DataFrames, Dates, Sockets
 include("CoinTossXUtilities.jl")
 clearconsole()
@@ -60,27 +53,6 @@ mutable struct Fundamentalist <: Agent
 end
 mutable struct HighFrequency <: Agent
     actionTimes::Array{Millisecond,1} # Arrival process of when each agent makes a decision
-end
-#---------------------------------------------------------------------------------------------------
-
-#----- Market Data Listener -----#
-function Listen(LOB::LOBState)#, MA::MovingAverage)
-    receiver = UDPSocket()
-    connected = bind(receiver, ip"127.0.0.1", 1234)
-    # index = 1
-    if connected
-		println("Market data listener connected")
-		try
-			while true
-	            message = String(recv(receiver))
-				UpdateLOBState!(LOB, message)
-                # UpdateMovingAverage!(LOB, MA, index)
-                # index += 1
-	        end
-		finally
-			close(receiver)
-		end
-    end
 end
 #---------------------------------------------------------------------------------------------------
 
@@ -272,22 +244,16 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Simulation -----#
-function InjectSimulation(param, securityId, seed)
-    # Initialize parameter struct
-    parameters = Parameters(param[1], param[2], param[3], param[4], param[5], param[6], param[7], param[8], param[9], param[10], param[11], param[12], param[13], param[14], param[15]) # Initialize parameters
+function InjectSimulation(parameters; startJVM = false, seed = 1)
 	Random.seed!(seed)
-    # Initialize the agents
-    (HFagents, chartists, fundamentalists) = InitializeAgents(parameters)
-    # Initialize decision times
-    data = CreateAgentDecisions(parameters, HFagents, chartists, fundamentalists)
+    (HFagents, chartists, fundamentalists) = InitializeAgents(parameters) # Initialize the agents
+    data = CreateAgentDecisions(parameters, HFagents, chartists, fundamentalists) # Initialize decision times
     # Initialize LOB state and MA
     LOB = LOBState(100, 0, 1000, 950, 1050, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
     MA = MovingAverage(parameters.m₀, [Millisecond(0); data.RelativeTime], mean(diff(Dates.value.([Millisecond(0); data.RelativeTime]))))
-    # Setup storage for time series of mid-price
-    times = []; midprice = []
-    # Start up JVM, login and setup the listener
-    # StartJVM()
-    gateway = Login(securityId, securityId)
+    times = Vector{Millisecond}(); midprice = Vector{Float64}() # Setup storage for time series of mid-price
+    startJVM ? StartJVM() : nothing # Start JVM for first run, thereafter don't start it
+    gateway = Login(1, 1)
     receiver = UDPSocket()
     connected = bind(receiver, ip"127.0.0.1", 1234)
     if connected
@@ -342,23 +308,17 @@ function InjectSimulation(param, securityId, seed)
     end
     return times, midprice
 end
-function RunSimulation(param, securityId::Int64; seed = 2, startVM = false)
-    if startVM # Start JVM for first run, thereafter don't start it
-        StartJVM()
-    end
-    InjectSimulation(param, securityId, seed)
-end
 #---------------------------------------------------------------------------------------------------
 
 #----- Example -----#
 StartCoinTossX(build = false)
-param = (10, 20, 15, 20, 20, 10, 40, 10, 40, 0.05, 2, 2, 1000, 0.2, Millisecond(3600 * 1000))
-x = RunSimulation(param, 1, startVM = true)     # First run, must start JVM
-x = RunSimulation(param, 2)                     # Next run must be on different security, don't need to start JVM again
-##
+param = Parameters(10, 20, 15, 20, 20, 10, 40, 10, 40, 0.05, 2, 2, 1000, 0.2, Millisecond(3600 * 1000))
+x = InjectSimulation(param; startJVM = true) # First run, must start JVM
+x = InjectSimulation(param) # Next run must be on different security, don't need to start JVM again
+
 using Plots
 plot(Dates.value.(x[1]) ./ 1000, x[2])
-##
+
 StopCoinTossX()
 exit()
 #---------------------------------------------------------------------------------------------------
