@@ -274,7 +274,7 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Simulation -----#
-function InjectSimulation(param; seed = 2)
+function InjectSimulation(param, securityId, seed)
     # Initialize parameter struct
     parameters = Parameters(param[1], param[2], param[3], param[4], param[5], param[6], param[7], param[8], param[9], param[10], param[11], param[12], param[13], param[14], param[15]) # Initialize parameters
 	Random.seed!(seed)
@@ -288,8 +288,8 @@ function InjectSimulation(param; seed = 2)
     # Setup storage for time series of mid-price
     times = []; midprice = []
     # Start up JVM, login and setup the listener
-    StartJVM()
-    gateway = Login(1, 1)
+    # StartJVM()
+    gateway = Login(securityId, securityId)
     receiver = UDPSocket()
     connected = bind(receiver, ip"127.0.0.1", 1234)
     if connected
@@ -344,28 +344,23 @@ function InjectSimulation(param; seed = 2)
     end
     return times, midprice
 end
+function RunSimulation(param, securityId::Int64; seed = 2, startVM = false)
+    if startVM # Start JVM for first run, thereafter don't start it
+        StartJVM()
+    end
+    InjectSimulation(param, securityId, seed)
+end
 #---------------------------------------------------------------------------------------------------
 
 #----- Example -----#
-# StartCoinTossX()
-# client = Login(1, 1)
-# LOB = LOBState(0, 0, 0, 0, 0, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
-# z = @async Listen(LOB)
-# SubmitOrder(client, Order(1, "John", "Buy", "Limit", 100, 50))
-# Logout(client)
-# StopCoinTossX()
-#---------------------------------------------------------------------------------------------------
-#=
 StartCoinTossX(build = false)
-InjectSimulation(decisionTimes)
-StopCoinTossX()
-=#
-StartCoinTossX(build = false)
-# InjectSimulation(decisionTimes)
-param = (10, 15, 20, 20, 20, 10, 40, 10, 40, 0.05, 2, 2, 1000, 0.2, Millisecond(3600 * 1000))
-x = InjectSimulation(param)
-StopCoinTossX()
-exit()
+param = (10, 15, 20, 20, 20, 10, 40, 10, 40, 0.05, 2, 2, 1000, 0.2, Millisecond(500 * 1000))
+x = RunSimulation(param, 1, startVM = true)     # First run, must start JVM
+x = RunSimulation(param, 2)                     # Next run must be on different security, don't need to start JVM again
 ##
 using Plots
 plot(Dates.value.(x[1]), x[2])
+##
+StopCoinTossX()
+exit()
+#---------------------------------------------------------------------------------------------------
