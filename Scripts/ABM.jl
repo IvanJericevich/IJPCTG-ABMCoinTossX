@@ -104,15 +104,13 @@ function HighFrequencyAgentAction!(order::Order, LOB::LOBState, parameters::Para
 	    order.side = rand() < θ ? "Sell" : "Buy"
 	    if order.side == "Sell"
 	        α = 1 - (LOB.ρₜ/parameters.ν) # Shape for power law
-	        λₜ = LOB.sₜ / exp(- LOB.ρₜ / parameters.κ) # Placement depth parameter
-	        η = floor(- λₜ * log(rand()))
+            η = floor(rand(Gamma(LOB.sₜ, exp(LOB.ρₜ / parameters.κ))))
 	        order.price = LOB.bₜ + 1 + η
 	        order.volume = round(Int, PowerLaw(10, α))
             order.displayVolume = order.volume
 	    else
 	        α = 1 + (LOB.ρₜ/parameters.ν)
-	        λₜ = LOB.sₜ / exp(LOB.ρₜ / parameters.κ)
-	        η = floor(- λₜ * log(rand()))
+            η = floor(rand(Gamma(LOB.sₜ, exp(-LOB.ρₜ / parameters.κ))))
 	        order.price = LOB.aₜ - 1 - η
 	        order.volume = round(Int, PowerLaw(10, α))
             order.displayVolume = order.volume
@@ -251,7 +249,7 @@ function CreateAgentDecisions(parameters::Parameters, HFagents::Vector{HighFrequ
         limitTimes = HFagents[i].actionTimes[2:end]
 		limitOrders = map(x -> Order(orderId = idCounter + x, traderMnemonic = string("HF", i), type = "Limit"), 1:length(limitTimes))
 		append!(decisionTimes, DataFrame(RelativeTime = limitTimes, Order = limitOrders, AgentType = :HF, AgentIndex = i)) # Limit orders
-        cancelTimes = filter(x -> x < parameters.T, limitTimes .+ Millisecond(40 * 1000))
+        cancelTimes = filter(x -> x < parameters.T, limitTimes .+ Millisecond(20 * 1000))
 		cancelOrders = map(x -> Order(orderId = idCounter + x, traderMnemonic = string("HF", i), type = "Cancel"), 1:length(cancelTimes))
 	    append!(decisionTimes, DataFrame(RelativeTime = cancelTimes, Order = cancelOrders, AgentType = :HF, AgentIndex = i))
 		idCounter += length(limitTimes)
@@ -283,7 +281,7 @@ function InjectSimulation(param, securityId, seed)
     # Initialize decision times
     data = CreateAgentDecisions(parameters, HFagents, chartists, fundamentalists)
     # Initialize LOB state and MA
-    LOB = LOBState(50, 0, 1000, 975, 1025, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
+    LOB = LOBState(100, 0, 1000, 950, 1050, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
     MA = MovingAverage(parameters.m₀, [Millisecond(0); data.RelativeTime], mean(diff(Dates.value.([Millisecond(0); data.RelativeTime]))))
     # Setup storage for time series of mid-price
     times = []; midprice = []
@@ -354,12 +352,12 @@ end
 
 #----- Example -----#
 StartCoinTossX(build = false)
-param = (10, 15, 20, 20, 20, 10, 40, 10, 40, 0.05, 2, 2, 1000, 0.2, Millisecond(500 * 1000))
+param = (10, 20, 15, 20, 20, 10, 40, 10, 40, 0.05, 2, 2, 1000, 0.2, Millisecond(3600 * 1000))
 x = RunSimulation(param, 1, startVM = true)     # First run, must start JVM
 x = RunSimulation(param, 2)                     # Next run must be on different security, don't need to start JVM again
 ##
 using Plots
-plot(Dates.value.(x[1]), x[2])
+plot(Dates.value.(x[1]) ./ 1000, x[2])
 ##
 StopCoinTossX()
 exit()
