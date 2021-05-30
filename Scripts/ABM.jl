@@ -59,12 +59,12 @@ end
 #----- Initialize agents and their parameters -----#
 function InitializeAgents(parameters::Parameters)
 	chartists = Vector{Chartist}()
-	HFagents = map(i -> HighFrequency(AgentTimes(parameters.λᴸ, parameters.λᴸmin, parameters.λᴸmax, parameters.T)), 1:parameters.Nᴴ)
+	HFagents = map(i -> HighFrequency(AgentTimes(parameters.λᴴ, parameters.λᴴmin, parameters.λᴴmax, parameters.T)), 1:parameters.Nᴴ)
 	for i in 1:parameters.Nᴸₜ
 		actionTimes = AgentTimes(parameters.λᴸ, parameters.λᴸmin, parameters.λᴸmax, parameters.T)
 		push!(chartists, Chartist(parameters.m₀, actionTimes, convert(Float64, mean(diff(Dates.value.(actionTimes)))), 1))
 	end
-	fundamentalists = map(i -> Fundamentalist(parameters.m₀ * exp(rand(Normal(0, parameters.σ))), AgentTimes(parameters.λᴸ, parameters.λᴴmin, parameters.λᴴmax, parameters.T)), 1:parameters.Nᴸᵥ)
+	fundamentalists = map(i -> Fundamentalist(parameters.m₀ * exp(rand(Normal(0, parameters.σ))), AgentTimes(parameters.λᴸ, parameters.λᴸmin, parameters.λᴸmax, parameters.T)), 1:parameters.Nᴸᵥ)
     return HFagents, chartists, fundamentalists
 end
 #---------------------------------------------------------------------------------------------------
