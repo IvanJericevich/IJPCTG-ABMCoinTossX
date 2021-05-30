@@ -97,39 +97,68 @@ function HighFrequencyAgentAction!(order::Order, LOB::LOBState, parameters::Para
 		end
 	end
 end
+# function ChartistAction!(order::Order, LOB::LOBState, chartist::Chartist, parameters::Parameters)
+#     Δt = Dates.value(chartist.actionTimes[chartist.orderNumber + 1]) - Dates.value(chartist.actionTimes[chartist.orderNumber]) # Inter-arrival
+#     λ = 1 - exp(- Δt / chartist.τ) # Decay for low-pass filter
+#     chartist.p̄ₜ += λ * (LOB.mₜ - chartist.p̄ₜ)
+#     if !(abs(LOB.mₜ - chartist.p̄ₜ) <= LOB.sₜ) # Check if agent performs action
+#         # Determine the lower volume bound based on agent decision rule
+#         if LOB.sₜ < abs(LOB.mₜ - chartist.p̄ₜ) <= (parameters.δ * LOB.mₜ)
+#             xₘ = 20
+#         end
+#         if abs(LOB.mₜ - chartist.p̄ₜ) > (parameters.δ * LOB.mₜ)
+#             xₘ = 50
+#         end
+#         order.side = LOB.mₜ < chartist.p̄ₜ ? "Sell" : "Buy"
+#         α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
+#     end
+# 	if (order.side == "Buy" && !isempty(LOB.asks)) || (order.side == "Sell" && !isempty(LOB.bids)) # Agent won't submit MO if no orders on contra side
+# 		order.volume = round(Int, PowerLaw(xₘ, α))
+# 	end
+#     # Update the agent's EWMA
+#     chartist.orderNumber += 1
+# end
+# function FundamentalistAction!(order::Order, LOB::LOBState, fundamentalists::Fundamentalist, parameters::Parameters)
+#     if !(abs(LOB.mₜ - fundamentalists.fₜ) <= LOB.sₜ) # Check if agent performs action
+#         # Determine the lower volume bound based on agent decision rule
+#         if LOB.sₜ < abs(LOB.mₜ - fundamentalists.fₜ) <= (parameters.δ * LOB.mₜ)
+#             xₘ = 20
+#         end
+#         if abs(LOB.mₜ - fundamentalists.fₜ) > (parameters.δ * LOB.mₜ)
+#             xₘ = 50
+#         end
+#         order.side = fundamentalists.fₜ < LOB.mₜ ? "Sell" : "Buy"
+#         α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
+#     end
+# 	if (order.side == "Buy" && !isempty(LOB.asks)) || (order.side == "Sell" && !isempty(LOB.bids))
+#         order.volume = round(Int, PowerLaw(xₘ, α))
+# 	end
+# end
 function ChartistAction!(order::Order, LOB::LOBState, chartist::Chartist, parameters::Parameters)
+    # Update the agent's EWMA
     Δt = Dates.value(chartist.actionTimes[chartist.orderNumber + 1]) - Dates.value(chartist.actionTimes[chartist.orderNumber]) # Inter-arrival
     λ = 1 - exp(- Δt / chartist.τ) # Decay for low-pass filter
     chartist.p̄ₜ += λ * (LOB.mₜ - chartist.p̄ₜ)
-    if !(abs(LOB.mₜ - chartist.p̄ₜ) <= LOB.sₜ) # Check if agent performs action
-        # Determine the lower volume bound based on agent decision rule
-        if LOB.sₜ < abs(LOB.mₜ - chartist.p̄ₜ) <= (parameters.δ * LOB.mₜ)
-            xₘ = 20
-        end
-        if abs(LOB.mₜ - chartist.p̄ₜ) > (parameters.δ * LOB.mₜ)
-            xₘ = 50
-        end
-        order.side = LOB.mₜ < chartist.p̄ₜ ? "Sell" : "Buy"
-        α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
+    chartist.orderNumber += 1
+    # Set agent's actions
+    xₘ = 20
+    if abs(LOB.mₜ - chartist.p̄ₜ) > (parameters.δ * LOB.mₜ)
+        xₘ = 50
     end
+    order.side = LOB.mₜ < chartist.p̄ₜ ? "Sell" : "Buy"
+    α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
 	if (order.side == "Buy" && !isempty(LOB.asks)) || (order.side == "Sell" && !isempty(LOB.bids)) # Agent won't submit MO if no orders on contra side
 		order.volume = round(Int, PowerLaw(xₘ, α))
 	end
-    # Update the agent's EWMA
-    chartist.orderNumber += 1
 end
 function FundamentalistAction!(order::Order, LOB::LOBState, fundamentalists::Fundamentalist, parameters::Parameters)
-    if !(abs(LOB.mₜ - fundamentalists.fₜ) <= LOB.sₜ) # Check if agent performs action
-        # Determine the lower volume bound based on agent decision rule
-        if LOB.sₜ < abs(LOB.mₜ - fundamentalists.fₜ) <= (parameters.δ * LOB.mₜ)
-            xₘ = 20
-        end
-        if abs(LOB.mₜ - fundamentalists.fₜ) > (parameters.δ * LOB.mₜ)
-            xₘ = 50
-        end
-        order.side = fundamentalists.fₜ < LOB.mₜ ? "Sell" : "Buy"
-        α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
+    # Set agent's actions
+    xₘ = 20
+    if abs(LOB.mₜ - fundamentalists.fₜ) > (parameters.δ * LOB.mₜ)
+        xₘ = 50
     end
+    order.side = fundamentalists.fₜ < LOB.mₜ ? "Sell" : "Buy"
+    α = order.side == "Sell" ? 1 - (LOB.ρₜ/parameters.ν) : 1 + (LOB.ρₜ/parameters.ν)
 	if (order.side == "Buy" && !isempty(LOB.asks)) || (order.side == "Sell" && !isempty(LOB.bids))
         order.volume = round(Int, PowerLaw(xₘ, α))
 	end
@@ -249,7 +278,7 @@ function InjectSimulation(parameters; startJVM = false, seed = 1)
     (HFagents, chartists, fundamentalists) = InitializeAgents(parameters) # Initialize the agents
     data = CreateAgentDecisions(parameters, HFagents, chartists, fundamentalists) # Initialize decision times
     # Initialize LOB state and MA
-    LOB = LOBState(100, 0, 1000, 950, 1050, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
+    LOB = LOBState(50, 0, 1000, 975, 1025, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
     MA = MovingAverage(parameters.m₀, [Millisecond(0); data.RelativeTime], mean(diff(Dates.value.([Millisecond(0); data.RelativeTime]))))
     times = Vector{Millisecond}(); midprice = Vector{Float64}() # Setup storage for time series of mid-price
     startJVM ? StartJVM() : nothing # Start JVM for first run, thereafter don't start it
@@ -312,7 +341,7 @@ end
 
 #----- Example -----#
 StartCoinTossX(build = false)
-param = Parameters(10, 25, 15, 20, 20, 10, 40, 10, 40, 0.05, 1.5, 2, 1000, 0.5, Millisecond(3600 * 1000))
+param = Parameters(10, 10, 15, 20, 20, 10, 40, 10, 40, 0.03, 2.5, 2, 1000, 0.8, Millisecond(3600 * 1000))
 x = InjectSimulation(param; startJVM = true) # First run, must start JVM
 x = InjectSimulation(param) # Next run must be on different security, don't need to start JVM again
 
