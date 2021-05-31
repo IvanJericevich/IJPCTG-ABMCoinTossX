@@ -114,8 +114,14 @@ function ChartistAction!(order::Order, LOB::LOBState, chartist::Chartist, parame
 	if (order.side == "Buy" && !isempty(LOB.asks)) || (order.side == "Sell" && !isempty(LOB.bids)) # Agent won't submit MO if no orders on contra side
 		order.volume = round(Int, PowerLaw(xₘ, α))
 	end
-    if LOB.sₜ/LOB.mₜ > 0.1  # Agent won't send MO if it will cause a volatility auction
-        order.volume = 0
+    if order.side == "Sell" # Agent won't send MO if it will cause a volatility auction
+        if (abs(LOB.priceReference - LOB.bₜ) / LOB.priceReference) > 0.1
+            order.volume = 0
+        end
+    else
+        if (abs(LOB.aₜ - LOB.priceReference) / LOB.priceReference) > 0.1
+            order.volume = 0
+        end
     end
 end
 function FundamentalistAction!(order::Order, LOB::LOBState, fundamentalists::Fundamentalist, parameters::Parameters)
@@ -129,8 +135,14 @@ function FundamentalistAction!(order::Order, LOB::LOBState, fundamentalists::Fun
 	if (order.side == "Buy" && !isempty(LOB.asks)) || (order.side == "Sell" && !isempty(LOB.bids))
         order.volume = round(Int, PowerLaw(xₘ, α))
 	end
-    if LOB.sₜ/LOB.mₜ > 0.1  # Agent won't send MO if it will cause a volatility auction
-        order.volume = 0
+    if order.side == "Sell" # Agent won't send MO if it will cause a volatility auction
+        if (abs(LOB.priceReference - LOB.bₜ) / LOB.priceReference) > 0.1
+            order.volume = 0
+        end
+    else
+        if (abs(LOB.aₜ - LOB.priceReference) / LOB.priceReference) > 0.1
+            order.volume = 0
+        end
     end
 end
 #---------------------------------------------------------------------------------------------------
@@ -313,7 +325,7 @@ end
 
 #----- Example -----#
 StartCoinTossX(build = false)
-param = Parameters(10, 10, 10, 20, 15, 5, 40, 5, 40, 0.03, 2.5, 2, 1000, 0.1, Millisecond(3600 * 1000))
+param = Parameters(10, 20, 10, 20, 15, 5, 40, 5, 40, 0.03, 2.5, 2, 1000, 0.1, Millisecond(3600 * 1000))
 x = InjectSimulation(param; startJVM = true) # First run, must start JVM
 x = InjectSimulation(param) # Next run must be on different security, don't need to start JVM again
 
