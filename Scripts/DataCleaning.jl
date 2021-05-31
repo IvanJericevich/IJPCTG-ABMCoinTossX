@@ -215,6 +215,7 @@ Output:
 function CleanData(taqFile::String; allowCrossing::Bool = false)
     orders = CSV.File(string("Data/", taqFile, ".csv"), types = Dict(:ClientOrderId => Int64, :DateTime => DateTime, :Price => Int64, :Volume => Int64, :Side => Symbol, :Type => Symbol, :TraderMnemonic => Int64), dateformat = "yyyy-mm-dd HH:MM:SS.s") |> DataFrame
     orders.Type[findall(x -> x == :New, orders.Type)] .= :Limit; orders.Type[findall(x -> x == 0, orders.Price)] .= :Market # Rename Types
+    orders.ClientOrderId[findall(x -> x == :Cancelled, orders.Type)] .*= -1
     rename!(orders, [:ClientOrderId => :OrderId, :TraderMnemonic => :Trader])
     traders = CSV.File("Data/Trader.csv", drop = [:TraderId]) |> Tables.matrix |> vec
     orders.Trader = traders[orders.Trader] # Map tarder IDs to their label

@@ -20,3 +20,38 @@ ExactOneSampleKSTest(returns, Normal())
 ADFTest(returns, deterministic, lag)
 
 surfaces = Array{Moments, 2}()
+
+δgrid
+κgrid
+νgrid
+σgrid
+
+δmoments = Dict{Float64, Array{Float64, 3}}() # Each key is a single value of δ
+for δ in δgrid
+    combinations = zeros(Float64, 2, 2, 2)
+    for x in 1:length(κgrid)
+        for y in 1:length(νgrid)
+            for z in 1:length(σgrid)
+                parameters = Parameters()
+                time, midPrice = InjectSimulation()
+                combinations[x, y, z] = ComputeMoments()
+            end
+        end
+    end
+    δmoments[δ] = combinations
+end
+5*4
+
+count = 0
+for δ in 1:5
+    for x in 1:5
+        for y in 1:5
+            for z in 1:5
+                count +=1
+            end
+        end
+    end
+end
+count
+4 * 5^4
+2500 / 60
