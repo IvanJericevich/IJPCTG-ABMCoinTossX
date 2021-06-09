@@ -1,6 +1,6 @@
-using Random, Distributions, DataFrames, Dates, Sockets
-include("CoinTossXUtilities.jl")
-clearconsole()
+using Random, Distributions, DataFrames, Dates, Sockets, Plots
+# include("CoinTossXUtilities.jl")
+# clearconsole()
 #---------------------------------------------------------------------------------------------------
 
 #----- Structures -----#
@@ -20,6 +20,9 @@ struct Parameters
     m₀::Float64 # Initial mid-price
     σ::Float64 # Std dev in Normal for log-normal for fundamental value
     T::Millisecond # Simulation time
+	function Parameters(; Nᴸₜ = 1, Nᴸᵥ = 1, Nᴴ = 8, λᴸ = 20, λᴴ = 15, λᴸmin = 5, λᴸmax = 40, λᴴmin = 5, λᴴmax = 40, δ = 0.03, κ = 2.5, ν = 2, m₀ = 10000, σ = 0.1, T = Millisecond(3600 * 1000))
+		new(Nᴸₜ, Nᴸᵥ, Nᴴ, λᴸ, λᴴ, λᴸmin, λᴸmax, λᴴmin, λᴴmax, δ, κ, ν, m₀, σ, T)
+	end
 end
 mutable struct LimitOrder
     price::Int64
@@ -161,48 +164,50 @@ function UpdateLOBState!(LOB::LOBState, message)
 	fields = split(msg[1], ",")
     type = Symbol(fields[1]); side = Symbol(fields[2]); trader = Symbol(fields[3])
     executions = msg[2:end]
-	if executions[1] != ""
-		for execution in executions
-	        executionFields = split(execution, ",")
-	        id = parse(Int, executionFields[1]); price = parse(Int, executionFields[2]); volume = parse(Int, executionFields[3])
-	        if type == :New
-	            side == :Buy ? push!(LOB.bids, id => LimitOrder(price, volume, trader)) : push!(LOB.asks, id => LimitOrder(price, volume, trader))
-	        elseif type == :Cancelled
-	            side == :Buy ? delete!(LOB.bids, id) : delete!(LOB.asks, id)
-	        elseif type == :Trade
-	            if side == :Buy
-					LOB.priceReference = LOB.aₜ
-	                LOB.asks[id].volume -= volume
-	                if LOB.asks[id].volume == 0
-	                    delete!(LOB.asks, id)
-	                end
-	            else
-					LOB.priceReference = LOB.bₜ
-	                LOB.bids[id].volume -= volume
-	                if LOB.bids[id].volume == 0
-	                    delete!(LOB.bids, id)
-	                end
-	            end
-	        end
-	    end
-		totalBuyVolume = 0; totalSellVolume = 0
-		if !isempty(LOB.bids) && !isempty(LOB.asks)
-			LOB.bₜ = maximum(order -> order.price, values(LOB.bids)); LOB.aₜ = minimum(order -> order.price, values(LOB.asks))
-			totalBuyVolume = sum(order.volume for order in values(LOB.bids)); totalSellVolume = sum(order.volume for order in values(LOB.asks))
-		else
-			if !isempty(LOB.bids)
-				LOB.bₜ = maximum(order -> order.price, values(LOB.bids))
-				totalBuyVolume = sum(order.volume for order in values(LOB.bids))
-			end
-			if !isempty(LOB.asks)
-				LOB.aₜ = minimum(order -> order.price, values(LOB.asks))
-				totalSellVolume = sum(order.volume for order in values(LOB.asks))
-			end
+	for execution in executions
+        executionFields = split(execution, ",")
+        id = parse(Int, executionFields[1]); price = parse(Int, executionFields[2]); volume = parse(Int, executionFields[3])
+        if type == :New
+            side == :Buy ? push!(LOB.bids, id => LimitOrder(price, volume, trader)) : push!(LOB.asks, id => LimitOrder(price, volume, trader))
+        elseif type == :Cancelled
+            side == :Buy ? delete!(LOB.bids, -id) : delete!(LOB.asks, -id)
+        elseif type == :Trade
+            if side == :Buy
+				LOB.priceReference = LOB.aₜ
+                LOB.asks[id].volume -= volume
+                if LOB.asks[id].volume == 0
+                    delete!(LOB.asks, id)
+                end
+            else
+				LOB.priceReference = LOB.bₜ
+                LOB.bids[id].volume -= volume
+                if LOB.bids[id].volume == 0
+                    delete!(LOB.bids, id)
+                end
+            end
+        end
+    end
+	totalBuyVolume = 0; totalSellVolume = 0
+	if !isempty(LOB.bids) && !isempty(LOB.asks)
+		LOB.bₜ = maximum(order -> order.price, values(LOB.bids)); LOB.aₜ = minimum(order -> order.price, values(LOB.asks))
+		totalBuyVolume = sum(order.volume for order in values(LOB.bids)); totalSellVolume = sum(order.volume for order in values(LOB.asks))
+	else
+		if !isempty(LOB.bids)
+			LOB.bₜ = maximum(order -> order.price, values(LOB.bids))
+			totalBuyVolume = sum(order.volume for order in values(LOB.bids))
+		# else
+		# 	LOB.bₜ = LOB.aₜ - 50
 		end
-		LOB.sₜ = abs(LOB.aₜ - LOB.bₜ)
-		LOB.mₜ = (LOB.aₜ + LOB.bₜ) / 2
-	    LOB.ρₜ = (totalBuyVolume == 0) && (totalSellVolume == 0) ? 0.0 : (totalBuyVolume - totalSellVolume) / (totalBuyVolume + totalSellVolume)
+		if !isempty(LOB.asks)
+			LOB.aₜ = minimum(order -> order.price, values(LOB.asks))
+			totalSellVolume = sum(order.volume for order in values(LOB.asks))
+		# else
+		# 	LOB.aₜ = LOB.bₜ + 50
+		end
 	end
+	LOB.sₜ = abs(LOB.aₜ - LOB.bₜ)
+	LOB.mₜ = (LOB.aₜ + LOB.bₜ) / 2
+    LOB.ρₜ = (totalBuyVolume == 0) && (totalSellVolume == 0) ? 0.0 : (totalBuyVolume - totalSellVolume) / (totalBuyVolume + totalSellVolume)
 end
 #---------------------------------------------------------------------------------------------------
 
@@ -234,7 +239,7 @@ function CreateAgentDecisions(parameters::Parameters, HFagents::Vector{HighFrequ
         limitTimes = HFagents[i].actionTimes[2:end]
 		limitOrders = map(x -> Order(orderId = idCounter + x, traderMnemonic = string("HF", i), type = "Limit"), 1:length(limitTimes))
 		append!(decisionTimes, DataFrame(RelativeTime = limitTimes, Order = limitOrders, AgentType = :HF, AgentIndex = i)) # Limit orders
-        cancelTimes = filter(x -> x < parameters.T, limitTimes .+ Millisecond(20 * 1000))
+        cancelTimes = filter(x -> x < parameters.T, limitTimes .+ Millisecond(30 * 1000))
 		cancelOrders = map(x -> Order(orderId = idCounter + x, traderMnemonic = string("HF", i), type = "Cancel"), 1:length(cancelTimes))
 	    append!(decisionTimes, DataFrame(RelativeTime = cancelTimes, Order = cancelOrders, AgentType = :HF, AgentIndex = i))
 		idCounter += length(limitTimes)
@@ -257,16 +262,15 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Simulation -----#
-function InjectSimulation(parameters; startJVM = false, seed = 1)
+function InjectSimulation(gateway, parameters; seed = 1)
 	Random.seed!(seed)
     (HFagents, chartists, fundamentalists) = InitializeAgents(parameters) # Initialize the agents
     data = CreateAgentDecisions(parameters, HFagents, chartists, fundamentalists) # Initialize decision times
     # Initialize LOB state and MA
-    LOB = LOBState(100, 0, parameters.m₀, parameters.m₀, 950, 1050, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
+    LOB = LOBState(100, 0, parameters.m₀, parameters.m₀, 9950, 10050, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
     MA = MovingAverage(parameters.m₀, [Millisecond(0); data.RelativeTime], mean(diff(Dates.value.([Millisecond(0); data.RelativeTime]))))
     times = Vector{Millisecond}(); midprice = Vector{Float64}() # Setup storage for time series of mid-price
-    startJVM ? StartJVM() : nothing # Start JVM for first run, thereafter don't start it
-    gateway = Login(1, 1)
+	StartLOB(gateway)
     receiver = UDPSocket()
     connected = bind(receiver, ip"127.0.0.1", 1234)
     if connected
@@ -305,11 +309,11 @@ function InjectSimulation(parameters; startJVM = false, seed = 1)
 				end
                 if messagesent == true
                     message = String(recv(receiver))
-                    println(message)
+                    #println(message)
                     UpdateLOBState!(LOB, message)
-                    println(LOB.sₜ)
-                    println(LOB.ρₜ)
-                    push!(times, data[i, :Time])
+                    #println(LOB.sₜ)
+					#println(string(LOB.priceReference, "      ", LOB.bₜ, "       ", LOB.aₜ))
+                    #push!(times, data[i, :Time])
                     push!(midprice, LOB.mₜ)
                 end
                 @info "Trading" progress=(data.RelativeTime[i] / data.RelativeTime[end]) _id=id # Update progress
@@ -317,21 +321,23 @@ function InjectSimulation(parameters; startJVM = false, seed = 1)
         end
     finally
         close(receiver)
-        Logout(gateway)
+        EndLOB(gateway)
     end
-    return times, midprice
+    return midprice
 end
 #---------------------------------------------------------------------------------------------------
 
 #----- Example -----#
-StartCoinTossX(build = false)
-param = Parameters(10, 20, 10, 20, 15, 5, 40, 5, 40, 0.03, 2.5, 2, 1000, 0.1, Millisecond(3600 * 1000))
-x = InjectSimulation(param; startJVM = true) # First run, must start JVM
-x = InjectSimulation(param) # Next run must be on different security, don't need to start JVM again
+#=
+StartCoinTossX(build = true)
+StartJVM()
+gateway = Login(1, 1)
 
-using Plots
-plot(Dates.value.(x[1]) ./ 1000, x[2])
+param = Parameters(Nᴸₜ = 1, Nᴸᵥ = 1, Nᴴ = 8, δ = 0.03, κ = 2.5, ν = 2, m₀ = 10000, σ = 0.1, T = Millisecond(3000 * 1000))
+x = InjectSimulation(gateway, param) # First run, must start JVM
 
+Logout(gateway)
 StopCoinTossX()
 exit()
+=#
 #---------------------------------------------------------------------------------------------------

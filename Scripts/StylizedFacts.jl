@@ -25,6 +25,22 @@ using Distributions, CSV, Plots, DataFrames, StatsPlots, Dates, StatsBase, LaTeX
 clearconsole()
 #---------------------------------------------------------------------------------------------------
 
+#----- Generate stylized facts -----#
+function StylizedFacts(orders::DataFrame, file::String; resolution = nothing, format::String = "pdf")
+    if isnothing(resolution)
+        data = CSV.File(string("Data/", file, ".csv"), drop = [:MicroPrice, :Spread, :DateTime], missingstring = "missing") |> DataFrame
+        logreturns = diff(log.(filter(x -> !ismissing(x), data[:, :MidPrice])))
+    else
+        data = CSV.File(string("Data/MidPrice ", resolution, " Bars.csv"), missingstring = "missing") |> DataFrame
+        logreturns = diff(log.(filter(x -> !ismissing(x), data[:, :Close])))
+    end
+    LogReturnDistribution(logreturns; format = format)
+    LogReturnAutocorrelation(logreturns, 500; format = format)
+    TradeSignAutocorrelation(orders, 100; format = format)
+    ExtremeLogReturnPercentileDistribution(logreturns; format = format)
+end
+#---------------------------------------------------------------------------------------------------
+
 #----- Extract OHLCV data -----#
 function OHLCV(lobFile::DataFrame, resolution)
     l1lob = CSV.File(string("Data/", lobFile, ".csv"), drop = [:Price, :Side, :Spread], missingstring = "missing") |> DataFrame
@@ -48,64 +64,70 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Log return sample distributions for different time resolutions -----#
-function LogReturnDistribution(resolution::Symbol; lobFile::String, cummulative::Bool = false, format::String = "pdf")
-    # Obtain log-returns of price series
-    if resolution == :TickbyTick
-        data = CSV.File(string("Data/", lobFile, ".csv"), missingstring = "missing") |> DataFrame
-        logReturns = diff(log.(filter(x -> !ismissing(x), data[:, :MidPrice])))
-    else
-        data = CSV.File(string("Data/MicroPrice ", resolution, " Bars.csv"), missingstring = "missing") |> DataFrame
-        logReturns = diff(log.(filter(x -> !ismissing(x), data[:, :Close])))
+function LogReturnDistribution(logreturns::Vector{Float64}; format::String = "pdf")
+    normalDistribution = fit(Normal, logreturns)
+    abslogreturns = sort(abs.(logreturns)) |> x -> filter(!iszero, x)
+    n = length(abslogreturns)
+    empiricalcdf = ecdf(logreturns) |> x -> 1 .- x(abslogreturns)
+    normalcdf = 1 .- cdf.(normalDistribution, abslogreturns)
+    index = minimum([findprev(x -> x > 0, empiricalcdf, n), findprev(x -> x > 0, empiricalcdf, n)])
+    if index != n
+        deleteat!(abslogreturns, index:n)
+        deleteat!(empiricalcdf, index:n)
+        deleteat!(normalcdf, index:n)
     end
-    # Fit theoretical distributions
-    theoreticalDistribution = fit(Normal, logReturns)
-    if cummulative
-        # Plot empirical distribution
-        empiricalDistribution = bar(logReturns, func = cdf, fillcolor = :blue, linecolor = :blue, xlabel = "Log returns", ylabel = "Density", label = "Empirical", legendtitle = "Distribution")
-        # Plot fitted theoretical distributions
-        plot!(empiricalDistribution, cdf.(theoreticalDistribution, logReturns), linecolor = :black, label = "Fitted Normal")
-        savefig(empiricalDistribution, string("Figures/Log-ReturnCummulativeDistribution", resolution, ".", format))
-    else
-        # Plot empirical distribution
-        empiricalDistribution = histogram(logReturns, normalize = :pdf, fillcolor = :blue, linecolor = :blue, xlabel = "Log returns", ylabel = "Density", label = "Empirical", legendtitle = "Empirical Distribution", legend = :topleft)
-        # Plot fitted theoretical distributions
-        # plot!(empiricalDistribution, [theoreticalDistribution1, theoreticalDistribution2], linecolor = [:green :purple], label = ["Fitted Normal" "Fitted Inverse Gaussian"])
-        plot!(empiricalDistribution, theoreticalDistribution, linecolor = :black, label = "Fitted Normal")
-        qqplot!(empiricalDistribution, Normal, logReturns, xlabel = "Normal theoretical quantiles", ylabel = "Sample quantiles", linecolor = :black, guidefontsize = 7, tickfontsize = 5, xrotation = 30, yrotation = 30, marker = (:blue, stroke(:blue), 3), legend = false, inset = (1, bbox(0.65, 0.1, 0.33, 0.33, :top)), subplot = 2)
-        savefig(empiricalDistribution, string("Figures/Log-ReturnDistribution", resolution, ".", format))
-    end
+    distribution = histogram(logreturns, normalize = :pdf, fillcolor = :blue, linecolor = :blue, xlabel = "Log returns", ylabel = "Probability Density", label = "Empirical", legendtitle = "Empirical Distribution", legend = :bottomleft, legendfontsize = 5, legendtitlefontsize = 7, fg_legend = :transparent)
+    plot!(distribution, normalDistribution, linecolor = :black, label = "Fitted Normal")
+    plot!(distribution, abslogreturns, hcat(empiricalcdf, normalcdf), seriestype = [:scatter :line], markercolor = :blue, markerstrokecolor = :blue, markersize = 3, linecolor = :black, xlabel = "Log returns", ylabel = "Cummulative Density", scale = :log10, legend = false, guidefontsize = 7, tickfontsize = 5, xrotation = 30, yrotation = 30, inset = (1, bbox(0.1, 0.1, 0.33, 0.33, :top)), subplot = 2)
+    qqplot!(distribution, Normal, logreturns, xlabel = "Normal theoretical quantiles", ylabel = "Sample quantiles", linecolor = :black, guidefontsize = 7, tickfontsize = 5, xrotation = 30, yrotation = 30, marker = (:blue, stroke(:blue), 3), legend = false, inset = (1, bbox(0.65, 0.1, 0.33, 0.33, :top)), subplot = 3)
+    savefig(distribution, string("Figures/Log-ReturnDistribution.", format))
 end
 #---------------------------------------------------------------------------------------------------
 
 #----- Log-return and absolute log-return autocorrelation -----#
-function LogReturnAutocorrelation(lag::Int64; lobFile::String, format::String = "pdf")
-    # Obtain log-returns
-    data = CSV.File(string("Data/", lobFile, ".csv"), missingstring = "missing") |> DataFrame
-    logReturns = diff(log.(filter(x -> !ismissing(x), data.MicroPrice)))
-    # Calculate autocorrelations
-    autoCorr = autocor(logReturns, 1:lag; demean = false)
-    absAutoCorr = autocor(abs.(logReturns), 1:lag; demean = false)
-    # Plot
+function LogReturnAutocorrelation(logreturns::Vector{Float64}, lag::Int64; format::String = "pdf")
+    autoCorr = autocor(logreturns, 1:lag; demean = false)
+    absAutoCorr = autocor(abs.(logreturns), 1:lag; demean = false)
     autoCorrPlot = plot(autoCorr, seriestype = :sticks, linecolor = :black, legend = false, xlabel = "Lag", ylabel = "Autocorrelation")
-    plot!(autoCorrPlot, [1.96 / sqrt(length(logReturns)), -1.96 / sqrt(length(logReturns))], seriestype = :hline, line = (:dash, :black, 1))
-    plot!(autoCorrPlot, absAutoCorr, seriestype = :sticks, linecolor = :black, legend = false, xlabel = "Lag", ylabel = "Autocorrelation", guidefontsize = 7, inset = (1, bbox(0.62, 0.55, 0.33, 0.33, :top)), subplot = 2)
+    plot!(autoCorrPlot, [1.96 / sqrt(length(logreturns)), -1.96 / sqrt(length(logreturns))], seriestype = :hline, line = (:dash, :black, 1))
+    plot!(autoCorrPlot, absAutoCorr, seriestype = :sticks, linecolor = :black, legend = false, xlabel = "Lag", ylabel = "Autocorrelation", inset = (1, bbox(0.62, 0.55, 0.33, 0.33, :top)), subplot = 2, guidefontsize = 7, tickfontsize = 5, xrotation = 30, yrotation = 30)
     savefig(autoCorrPlot, "Figures/Log-ReturnAutocorrelation." * format)
 end
 #---------------------------------------------------------------------------------------------------
 
 #----- Trade sign autocorrealtion -----#
-function TradeSignAutocorrelation(lag::Int64; lobFile::String, format::String = "pdf")
-    # Extract trade signs
-    data = CSV.File(string("Data/", lobFile, ".csv"), missingstring = "missing") |> DataFrame
-    tradeSignsTemp = filter(x -> x.Type == "Trade" && x.Price == 0, data).Side
-    tradeSigns = map(x -> x == "Buy" ? 1 : -1, tradeSignsTemp)
-    # Calculate autocorrelations
+function TradeSignAutocorrelation(data, lag::Int64; format::String = "pdf")
+    tradeSigns = filter(x -> x.Type == :Market, data).Side |> y -> map(x -> x == :Buy ? 1 : -1, y)
     autoCorr = autocor(tradeSigns, 1:lag; demean = false)
-    # Plot
     autoCorrPlot = plot(autoCorr, seriestype = :sticks, linecolor = :black, legend = false, xlabel = "Lag", ylabel = "Autocorrelation")
     plot!(autoCorrPlot, [quantile(Normal(), (1 + 0.95) / 2) / sqrt(length(tradeSigns)), quantile(Normal(), (1 - 0.95) / 2) / sqrt(length(tradeSigns))], seriestype = :hline, line = (:dash, :black, 1))
-    plot!(autoCorrPlot, autoCorr, xscale = :log10, inset = (1, bbox(0.58, 0.0, 0.4, 0.4)), subplot = 2, legend = false, xlabel = "Lag", guidefontsize = 7, ylabel = "Autocorrelation", linecolor = :black) #  ", L"(\log_{10})
+    plot!(autoCorrPlot, autoCorr, xscale = :log10, inset = (1, bbox(0.58, 0.0, 0.4, 0.4)), subplot = 2, legend = false, xlabel = "Lag", guidefontsize = 7, tickfontsize = 5, xrotation = 30, yrotation = 30, ylabel = "Autocorrelation", linecolor = :black) #  ", L"(\log_{10})
     savefig(autoCorrPlot, "Figures/Trade-SignAutocorrelation." * format)
+end
+#---------------------------------------------------------------------------------------------------
+
+#----- Extreme log-return percentile distribution for different time resolutions -----#
+function ExtremeLogReturnPercentileDistribution(logreturns::Vector{Float64}; format::String = "pdf")
+    upperobservations = logreturns[findall(x -> x >= quantile(logreturns, 0.95), logreturns)]; lowerobservations = -logreturns[findall(x -> x <= quantile(logreturns, 0.05), logreturns)]
+    sort!(upperobservations); sort!(lowerobservations)
+    upperxₘᵢₙ = minimum(upperobservations); lowerxₘᵢₙ = minimum(lowerobservations)
+    upperα = 1 + length(upperobservations) / sum(log.(upperobservations ./ upperxₘᵢₙ)); lowerα = 1 + length(lowerobservations) / sum(log.(lowerobservations ./ lowerxₘᵢₙ))
+    upperTheoreticalQuantiles = map(i -> (1 - (i / length(upperobservations))) ^ (-1 / (upperα - 1)) * upperxₘᵢₙ, 1:length(upperobservations)); lowerTheoreticalQuantiles = map(i -> (1 - (i / length(lowerobservations))) ^ (-1 / (lowerα - 1)) * lowerxₘᵢₙ, 1:length(lowerobservations))
+    extremePercentileDistributionPlot = plot(upperobservations, seriestype = [:scatter, :line], marker = (:blue, stroke(:blue), :utriangle), normalize = :pdf, linecolor = :blue, xlabel = string("Log return Extreme percentiles"), ylabel = "Density", label = ["" "Upper percentiles"], fg_legend = :transparent)#, annotations = (3, y[3], Plots.text(string("α=" α), :left))))
+    plot!(extremePercentileDistributionPlot, lowerobservations, seriestype = [:scatter, :line], marker = (:blue, stroke(:blue), :pentagon), normalize = :pdf, linecolor = :blue, label = ["" "Lower percentiles"])
+    plot!(extremePercentileDistributionPlot, [upperTheoreticalQuantiles upperTheoreticalQuantiles], [upperobservations upperTheoreticalQuantiles], seriestype = [:scatter :line], inset = (1, bbox(0.2, 0.03, 0.34, 0.34, :top)), subplot = 2, guidefontsize = 7, tickfontsize = 5, xrotation = 30, yrotation = 30, legend = :none, xlabel = "Power-Law Theoretical Quantiles", ylabel = "Sample Quantiles", linecolor = :black, markercolor = :blue, markerstrokecolor = :blue, markershape = :utriangle, markersize = 3, fg_legend = :transparent)
+    plot!(extremePercentileDistributionPlot, [lowerTheoreticalQuantiles lowerTheoreticalQuantiles], [lowerobservations lowerTheoreticalQuantiles], seriestype = [:scatter :line], subplot = 2, linecolor = :black, markercolor = :blue, markerstrokecolor = :blue, markershape = :pentagon, markersize = 3)
+    savefig(extremePercentileDistributionPlot, string("Figures/ExtremeLog-ReturnPercentilesDistribution.", format))
+end
+#---------------------------------------------------------------------------------------------------
+
+#----- Extreme log-return percentile distribution for different time resolutions -----#
+function NormalizedDepthProfile(data::Vector{Vector{Int64}}; format::String = "pdf")
+    filter!(x -> x[1] != 0, data)
+    depthProfile = reduce(hcat, data)
+    μ = mean(depthProfile, dim = 1); σ = std(depthProfile, dim = 1)
+    normalizedProfile = transpose(mean((depthProfile .- μ) ./ σ, dim = 2), )
+    plot(-(1:7), mean())
 end
 #---------------------------------------------------------------------------------------------------
 
@@ -127,31 +149,6 @@ function InterArrivalTimeDistribution(lobFile::String; format::String = "pdf")
     plot!(logDistribution, [theoreticalDistribution1, theoreticalDistribution2, theoreticalDistribution3], linecolor = [:green :purple], label = ["Fitted Exponential" "Fitted Weibull" "Fitted Log-Normal"])
     plot!(logDistribution, [theoreticalQuantiles theoreticalQuantiles], [interArrivals theoreticalQuantiles], seriestype = [:scatter :line], inset = (1, bbox(0.6, 0.03, 0.34, 0.34, :top)), subplot = 2, legend = :none, xlabel = "Power-Law Theoretical Quantiles", ylabel = "Sample Quantiles", linecolor = :black, markercolor = :blue, markerstrokecolor = :blue, scale = :log10)
     savefig(logDistribution, "TradeLog-Inter-ArrivalDistribution." * format)
-end
-#---------------------------------------------------------------------------------------------------
-
-#----- Extreme log-return percentile distribution for different time resolutions -----#
-function ExtremeLogReturnPercentileDistribution(resolution::Symbol, side::Symbol; lobFile::String, format::String = "pdf")
-    # Obtain log-returns of price series
-    if resolution == :TickbyTick
-        data = CSV.File(string("Data/", lobFile, ".csv"), missingstring = "missing") |> DataFrame
-        logReturns = diff(log.(filter(x -> !ismissing(x), data[:, :MidPrice])))
-    else
-        data = CSV.File(string("MicroPrice ", resolution, " Bars.csv"), missingstring = "missing") |> DataFrame
-        logReturns = diff(log.(filter(x -> !ismissing(x), data[:, :Close])))
-    end
-    sort!(logReturns)
-    # Extract extreme empirical quantiles
-    observations = side == :Upper ? logReturns[findall(x -> x >= quantile(logReturns, 0.95), logReturns)] : -logReturns[findall(x -> x <= quantile(logReturns, 0.05), logReturns)]
-    # Estimate power-law distribution parameters
-    xₘᵢₙ = minimum(observations)
-    α = 1 + length(observations) / sum(log.(observations ./ xₘᵢₙ))
-    # Extract theoretical quantiles
-    theoreticalQuantiles = map(i -> (1 - (i / length(observations))) ^ (-1 / (α - 1)) * xₘᵢₙ, 1:length(observations))
-    # Plot
-    extremePercentileDistributionPlot = plot(observations, normalize = :pdf, linecolor = :blue, xlabel = string("Log return Extreme", side, " percentiles"), ylabel = "Density", legend = false)#, annotations = (3, y[3], Plots.text(string("α=" α), :left))))
-    plot!(extremePercentileDistributionPlot, [theoreticalQuantiles theoreticalQuantiles], [observations theoreticalQuantiles], seriestype = [:scatter :line], inset = (1, bbox(0.2, 0.03, 0.34, 0.34, :top)), subplot = 2, guidefontsize = 7, legend = :none, xlabel = "Power-Law Theoretical Quantiles", ylabel = "Sample Quantiles", linecolor = :black, markercolor = :blue, markerstrokecolor = :blue, scale = :log10)
-    savefig(extremePercentileDistributionPlot, string("Figures/Extreme", side, "Log-ReturnPercentilesDistribution", resolution,".", format))
 end
 #---------------------------------------------------------------------------------------------------
 

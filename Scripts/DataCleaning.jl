@@ -47,6 +47,16 @@ function OrderImbalance(bids::Dict{Int64, Order}, asks::Dict{Int64, Order})
         return (totalBuyVolume - totalSellVolume) / (totalBuyVolume + totalSellVolume)
     end
 end
+function DepthProfile(lob::Dict{Int64, Order}, side::Int64)
+    profile = zeros(Int64, 7)
+    prices = map(x -> x.Price, values(lob)) |> unique |> x -> side == 1 ? sort(x, rev = true) : sort(x, rev = false)
+    meanVolume = sum(v.Volume for v in values(lob)) / length(lob)
+    stdVolume
+    for p in 1:7
+        push!(profile, sum((v.Volume - meanVolume) for v in values(lob) if v.Price == prices[p]))
+    end
+    return profile
+end
 #---------------------------------------------------------------------------------------------------
 
 #----- Clean raw data into L1LOB format -----#
@@ -221,6 +231,7 @@ function CleanData(taqFile::String; allowCrossing::Bool = false)
     orders.Trader = traders[orders.Trader] # Map tarder IDs to their label
     bids = Dict{Int64, Order}(); asks = Dict{Int64, Order}() # Both sides of the entire LOB are tracked with keys corresponding to orderIds
     bestBid = Best(0, 0, Vector{Int64}()); bestAsk = Best(0, 0, Vector{Int64}()) # Current best bid/ask is stored in a tuple (Price, vector of Volumes, vector of OrderIds) and tracked
+    bidDepthProfile = zeros(Int64, nrow(orders)); askDepthProfile = zeros(Int64, nrow(orders))
     crossedOrderId = nothing # Stores the order that crossed if it hasn't been fully handled yet. If it has been processed then contains nothing
     imbalance = Vector{Union{Missing, Float64}}() # Calculate the order imbalance in the LOB
     open("Data/L1LOB.csv", "w") do file
@@ -259,6 +270,7 @@ function CleanData(taqFile::String; allowCrossing::Bool = false)
                     end
                 end
                 push!(imbalance, OrderImbalance(bids, asks)) # Calculate the volume imbalance after every iteration
+                bidDepthProfile[i, :] = DepthProfile(bids, 1); askDepthProfile[i, :] = DepthProfile(asks, -1)
                 @info "Cleaning:" progress=(i / nrow(orders)) _id=id # Update progress
             end
         end
@@ -266,7 +278,7 @@ function CleanData(taqFile::String; allowCrossing::Bool = false)
     Juno.notification("Data cleaning complete"; kind = :Info, options = Dict(:dismissable => false))
     orders.DateTime = Dates.value.(orders.DateTime .- orders.DateTime[1]) ./ 1000 # Reformat times into relative times (milliseconds)
     orders.Imbalance = imbalance # Append order imbalance to data
-    return orders
+    CSV.write("Data/TAQ.csv", orders)
 end
 #---------------------------------------------------------------------------------------------------
 
@@ -293,8 +305,8 @@ function VisualiseSimulation(orders::DataFrame, l1lob::String; format = "pdf", d
     plot!(bubblePlot, l1lob.DateTime, l1lob.MidPrice, seriestype = :steppost, linecolor = :black, label = "Mid-price")
     plot!(bubblePlot, l1lob.DateTime, l1lob.MicroPrice, seriestype = :line, linecolor = :green, label = "Micro-price")
     # Spread and imbalance features
-    volumeImbalance = plot(orders.DateTime, orders.Imbalance, seriestype = :line, linecolor = :purple, xlabel = "Time (s)", ylabel = "Order Imbalance", label = "OrderImbalance", legend = :topleft, legendfontsize = 5)
-    plot!(twinx(), l1lob.DateTime, l1lob.Spread, seriestype = :steppost, linecolor = :orange, xlabel = "Time (s)", ylabel = "Spread", label = "Spread", legend = :topright, legendfontsize = 5)
+    volumeImbalance = plot(orders.DateTime, orders.Imbalance, seriestype = :line, linecolor = :purple, xlabel = "Time (s)", ylabel = "Order Imbalance", label = "OrderImbalance", legend = :topleft, legendfontsize = 5, xrotation = 30)
+    plot!(twinx(), l1lob.DateTime, l1lob.Spread, seriestype = :steppost, linecolor = :orange, ylabel = "Spread", label = "Spread", legend = :topright, legendfontsize = 5, xrotation = 30)
     l = @layout([a; b{0.3h}])
     simulation = plot(bubblePlot, volumeImbalance, layout = l, link = :x, guidefontsize = 7)
     savefig(simulation, "Figures/Simulation." * format)

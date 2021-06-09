@@ -82,9 +82,17 @@ function Login(clientId::Int64, securityId::Int64)
     cd(directory)
     utilities = @jimport example.Utilities
     javaObject = jcall(utilities, "loadClientData", JavaObject{Symbol("client.Client")}, (jint, jint), clientId, securityId)
-    jcall(javaObject, "sendStartMessage", Nothing, ())
     Juno.notification("Logged in and trading session started"; kind = :Info, options = Dict(:dismissable => false))
     return TradingGateway(clientId, securityId, javaObject)
+end
+#---------------------------------------------------------------------------------------------------
+
+#----- Reset LOB -----#
+function StartLOB(tradingGateway::TradingGateway)
+	jcall(tradingGateway.javaObject, "sendStartMessage", Nothing, ())
+end
+function EndLOB(tradingGateway::TradingGateway)
+	jcall(tradingGateway.javaObject, "sendEndMessage", Nothing, ())
 end
 #---------------------------------------------------------------------------------------------------
 
@@ -102,7 +110,6 @@ end
 
 #----- Destroy client by logging out and ending the trading session -----#
 function Logout(tradingGateway::TradingGateway)
-    jcall(tradingGateway.javaObject, "sendEndMessage", Nothing, ())
     jcall(tradingGateway.javaObject, "close", Nothing, ())
     Juno.notification("Logged out and trading session ended"; kind = :Info, options = Dict(:dismissable => false))
 end
