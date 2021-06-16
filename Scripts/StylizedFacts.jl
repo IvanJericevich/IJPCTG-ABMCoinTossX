@@ -38,6 +38,7 @@ function StylizedFacts(orders::DataFrame, file::String; resolution = nothing, fo
     LogReturnAutocorrelation(logreturns, 500; format = format)
     TradeSignAutocorrelation(orders, 100; format = format)
     ExtremeLogReturnPercentileDistribution(logreturns; format = format)
+    DepthProfile(bidProfile, askProfile; format = "png")
 end
 #---------------------------------------------------------------------------------------------------
 
@@ -113,7 +114,7 @@ function ExtremeLogReturnPercentileDistribution(logreturns::Vector{Float64}; for
     upperxₘᵢₙ = minimum(upperobservations); lowerxₘᵢₙ = minimum(lowerobservations)
     upperα = 1 + length(upperobservations) / sum(log.(upperobservations ./ upperxₘᵢₙ)); lowerα = 1 + length(lowerobservations) / sum(log.(lowerobservations ./ lowerxₘᵢₙ))
     upperTheoreticalQuantiles = map(i -> (1 - (i / length(upperobservations))) ^ (-1 / (upperα - 1)) * upperxₘᵢₙ, 1:length(upperobservations)); lowerTheoreticalQuantiles = map(i -> (1 - (i / length(lowerobservations))) ^ (-1 / (lowerα - 1)) * lowerxₘᵢₙ, 1:length(lowerobservations))
-    extremePercentileDistributionPlot = plot(upperobservations, seriestype = [:scatter, :line], marker = (:blue, stroke(:blue), :utriangle), normalize = :pdf, linecolor = :blue, xlabel = string("Log return Extreme percentiles"), ylabel = "Density", label = ["" "Upper percentiles"], fg_legend = :transparent)#, annotations = (3, y[3], Plots.text(string("α=" α), :left))))
+    extremePercentileDistributionPlot = plot(upperobservations, seriestype = [:scatter, :line], marker = (:blue, stroke(:blue), :utriangle), normalize = :pdf, linecolor = :blue, xlabel = string("Log return extreme percentiles"), ylabel = "Density", label = ["" "Upper percentiles"], fg_legend = :transparent)#, annotations = (3, y[3], Plots.text(string("α=" α), :left))))
     plot!(extremePercentileDistributionPlot, lowerobservations, seriestype = [:scatter, :line], marker = (:blue, stroke(:blue), :pentagon), normalize = :pdf, linecolor = :blue, label = ["" "Lower percentiles"])
     plot!(extremePercentileDistributionPlot, [upperTheoreticalQuantiles upperTheoreticalQuantiles], [upperobservations upperTheoreticalQuantiles], seriestype = [:scatter :line], inset = (1, bbox(0.2, 0.03, 0.34, 0.34, :top)), subplot = 2, guidefontsize = 7, tickfontsize = 5, xrotation = 30, yrotation = 30, legend = :none, xlabel = "Power-Law Theoretical Quantiles", ylabel = "Sample Quantiles", linecolor = :black, markercolor = :blue, markerstrokecolor = :blue, markershape = :utriangle, markersize = 3, fg_legend = :transparent)
     plot!(extremePercentileDistributionPlot, [lowerTheoreticalQuantiles lowerTheoreticalQuantiles], [lowerobservations lowerTheoreticalQuantiles], seriestype = [:scatter :line], subplot = 2, linecolor = :black, markercolor = :blue, markerstrokecolor = :blue, markershape = :pentagon, markersize = 3)
@@ -121,13 +122,14 @@ function ExtremeLogReturnPercentileDistribution(logreturns::Vector{Float64}; for
 end
 #---------------------------------------------------------------------------------------------------
 
-#----- Extreme log-return percentile distribution for different time resolutions -----#
-function NormalizedDepthProfile(data::Vector{Vector{Int64}}; format::String = "pdf")
-    filter!(x -> x[1] != 0, data)
-    depthProfile = reduce(hcat, data)
-    μ = mean(depthProfile, dim = 1); σ = std(depthProfile, dim = 1)
-    normalizedProfile = transpose(mean((depthProfile .- μ) ./ σ, dim = 2), )
-    plot(-(1:7), mean())
+#----- Depth profile -----#
+DepthProfile(taqData, format = "png")
+function DepthProfile(profile::Array{Union{Missing, Int64}, 2}; format::String = "pdf")
+    μ = map(i -> mean(skipmissing(profile[:, i])), 1:size(profile, 2))
+    return μ
+    depthProfile = plot(-(1:7), μ[1:7], seriestype = [:scatter, :line], marker = (:blue, stroke(:blue), :utriangle), linecolor = :blue, label = ["" "Bid profile"], xlabel = "Price level of limit orders (<0: bids; >0: asks)", ylabel = "Volume", fg_legend = :transparent)
+    plot!(depthProfile, 1:7, μ[8:14], seriestype = [:scatter, :line], marker = (:red, stroke(:red), :dtriangle), linecolor = :red, label = ["" "Ask profile"])
+    savefig(depthProfile, string("Figures/DepthProfile.", format))
 end
 #---------------------------------------------------------------------------------------------------
 

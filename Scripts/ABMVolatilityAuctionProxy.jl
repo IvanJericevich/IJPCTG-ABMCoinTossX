@@ -329,11 +329,11 @@ end
 
 #----- Example -----#
 #=
-StartCoinTossX(build = true)
+StartCoinTossX(build = false)
 StartJVM()
 gateway = Login(1, 1)
 
-param = Parameters(Nᴸₜ = 1, Nᴸᵥ = 1, Nᴴ = 8, δ = 0.03, κ = 2.5, ν = 2, m₀ = 10000, σ = 0.1, T = Millisecond(3000 * 1000))
+param = Parameters(Nᴸₜ = 1, Nᴸᵥ = 1, Nᴴ = 8, δ = 0.01, κ = 1, ν = 1.5, m₀ = 10000, σ = 0.1, T = Millisecond(3000 * 1000))
 x = InjectSimulation(gateway, param) # First run, must start JVM
 
 Logout(gateway)

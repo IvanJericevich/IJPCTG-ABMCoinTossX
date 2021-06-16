@@ -1,10 +1,10 @@
 include("CoinTossXUtilities.jl")
-include("ABM.jl")
+include("ABMVolatilityAuctionProxy.jl")
 import HypothesisTests.ADFTest
 import Statistics: mean, quantile, std
 import StatsBase.kurtosis
 import GLM: lm, coef
-using ARCHModels, Polynomials, ProgressMeter, CSV
+using ARCHModels, Polynomials, ProgressMeter, CSV#, StatsPlots, DataFrames
 #---------------------------------------------------------------------------------------------------
 
 #----- Moments and parameter grid -----#
@@ -24,7 +24,7 @@ struct Moments # Moments of log-returns
         gph = GPH(abs.(logreturns))
         adf = ADFTest(logreturns, :none, 0).stat
         garch = sum(coef(ARCHModels.fit(GARCH{1, 1}, logreturns))[2:3])
-        hill = HillEstimator(logreturns[findall(x -> x >= quantile(logreturns, 0.95), logreturns)], 50)
+        hill = HillEstimator(logreturns[findall(x -> (x >= quantile(logreturns, 0.95)) && (x > 0), logreturns)], 50)
         new(μ, σ, κ, hurst, gph, adf, garch, hill)
     end
 end
@@ -91,9 +91,9 @@ end
 Ngrid = [(1, 1, 8), (1, 1, 7), (1, 1, 9), (1, 1, 6), (1, 1, 10)] # 1:4, 2:7, 2:9, 1:3, 1:5
 δgrid = range(0.01, 0.1, length = 5)
 κgrid = [1, 1.5, 2, 2.5, 3]
-νgrid = range(1.1, 3, length = 5)
+νgrid = range(2, 3, length = 5)
 σgrid = range(0.1, 1, length = 5)
-open("Data/Parameters.csv", "w") do file
+open("/home/ivanjericevich/Parameters.csv", "w") do file
     println(file, "Nt,Nv,Nh,Lambdal,Lambdah,LambdalMin,LambdalMax,LambdahMin,LambdahMax,Delta,Kappa,Nu,M0,Sigma,T") # Header
     for N in Ngrid
         for δ in δgrid
@@ -112,28 +112,47 @@ end
 
 #----- Sensitivity analysis -----#
 function SensitivityAnalysis()
-    parameterCombinations = CSV.File("Data/Parameters.csv") |> DataFrame
+    parameterCombinations = CSV.File("/home/ivanjericevich/Parameters.csv") |> DataFrame
     StartJVM()
     gateway = Login(1, 1)
-    try
-        open("Moments.csv", "w") do file
-            println(file, "Mu,Sigma,Kappa,Hurst,GPH,ADF,GARCH,Hill") # Header
-            @showprogress "Computing:" for i in 1:nrow(parameterCombinations)
-                parameters = Parameters(Nᴸₜ = parameterCombinations[i, :Nt], Nᴸᵥ = parameterCombinations[i, :Nv], Nᴴ = parameterCombinations[i, :Nh], δ = parameterCombinations[i, :Delta], κ = parameterCombinations[i, :Kappa], ν = parameterCombinations[i, :Nu], σ = parameterCombinations[i, :Sigma])
-                midPrice = InjectSimulation(gateway, parameters)
-                filter!(x -> !ismissing(x), midPrice)
+    open("/home/ivanjericevich/Moments.csv", "w") do file
+        println(file, "Nt,Nv,Nh,Lambdal,Lambdah,LambdalMin,LambdalMax,LambdahMin,LambdahMax,Delta,Kappa,Nu,M0,Sigma,T,Mu,Sigma,Kappa,Hurst,GPH,ADF,GARCH,Hill") # Header
+        @showprogress "Computing:" for i in 3111:nrow(parameterCombinations)
+            parameters = Parameters(Nᴸₜ = parameterCombinations[i, :Nt], Nᴸᵥ = parameterCombinations[i, :Nv], Nᴴ = parameterCombinations[i, :Nh], δ = parameterCombinations[i, :Delta], κ = parameterCombinations[i, :Kappa], ν = parameterCombinations[i, :Nu], σ = parameterCombinations[i, :Sigma])
+            midPrice = InjectSimulation(gateway, parameters)
+            filter!(x -> !ismissing(x), midPrice)
+            try
                 moments = Moments(midPrice)
-                println(file, string(moments.μ, ",", moments.σ, ",", moments.κ, ",", moments.hurst, ",", moments.gph, ",", moments.adf, ",", moments.garch, ",", moments.hill))
+                println(file, string(parameters.Nᴸₜ, ",", parameters.Nᴸᵥ, ",", parameters.Nᴴ, ",", parameters.λᴸ, ",", parameters.λᴴ, ",", parameters.λᴸmin, ",", parameters.λᴸmax, ",", parameters.λᴴmin, ",", parameters.λᴴmax, ",", parameters.δ, ",", parameters.κ, ",", parameters.ν, ",", parameters.m₀, ",", parameters.σ, ",", Dates.value(parameters.T), ",", moments.μ, ",", moments.σ, ",", moments.κ, ",", moments.hurst, ",", moments.gph, ",", moments.adf, ",", moments.garch, ",", moments.hill))
+            catch e
+                println(e)
+                println(file, string(parameters.Nᴸₜ, ",", parameters.Nᴸᵥ, ",", parameters.Nᴴ, ",", parameters.λᴸ, ",", parameters.λᴴ, ",", parameters.λᴸmin, ",", parameters.λᴸmax, ",", parameters.λᴴmin, ",", parameters.λᴴmax, ",", parameters.δ, ",", parameters.κ, ",", parameters.ν, ",", parameters.m₀, ",", parameters.σ, ",", Dates.value(parameters.T), ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN))
             end
         end
-    finally
-        Logout(gateway)
-        StopCoinTossX()
     end
+    Logout(gateway)
+    StopCoinTossX()
 end
+StartCoinTossX(build = false)
+SensitivityAnalysis()
 #---------------------------------------------------------------------------------------------------
 
-#----- Implementation -----#
-StartCoinTossX(build = true)
-SensitivityAnalysis()
+#----- Visualisation -----#
+function MomentBoxPlot(; format::String = "pdf")
+    data = CSV.File("Data/Moments.csv", types = Dict(:Sigma => String, :Nu => String, :Kappa => String, :Delta => String, :Nh => String)) |> DataFrame |> x -> filter!(y -> !isnan(y.Mu), x)
+    for p in [(:Sigma, "σ"), (:Nu, "ν"), (:Kappa, "κ"), (:Delta, "δ"), (:Nh, "N")]
+        for m in [(:Mean, "Mean"), (:StandardDeviation, "Standard Deviation"), (:Kurtosis, "Kurtosis"), (:Hurst, "Hurst exponent"), (:GPH, "Geweke and Porter-Hudak estimator"), (:ADF, "
+Augmented Dickey–Fuller test statistic"), (:GARCH, "Sum of GARCH(1, 1) parameters"), (:Hill, "Hill estimator")]
+            boxplot = @df data violin(p[1], m[1], linewidth = 0, xlabel = p[2], ylabel = m[2])
+            @df data boxplot!(boxplot, p[1], m[1], fillalpha = 0.75, linewidth = 2)
+            @df data dotplot!(boxplot, p[1], m[1], marker = (:black, stroke(0)))
+            savefig(boxplot, string("Figures/", p[1], "-", m[1], "Boxplot.", format))
+        end
+    end
+end
+function MomentSurfacePlot(parameter1::Tuple{Symbol, String}, parameter2::Tuple{Symbol, String}, moment::Tuple{Symbol, String}; format::String = "pdf")
+    data = CSV.File("Data/Moments.csv") |> DataFrame |> x -> filter!(y -> !isnan(y.Mu), x) |> z -> groupby(z, [parameter1[1], parameter2[1]]) |> a -> combine(a, moment[1] => mean)
+    surface = plot(data[:, parameter1[1]], data[:, parameter2[1]], data[:, moment[1]], seriestype = :surface, xlabel = parameter1[2], ylabel = parameter2[2], zlabel = moment[2])
+    savefig(surface, string("Figures/", parameter1[1], "-", parameter2[1], "-", moment[1], "Surface.", format))
+end
 #---------------------------------------------------------------------------------------------------
