@@ -1,4 +1,17 @@
-#----- Dependencies -----#
+#=
+NMTA:
+- Julia version: 1.5.3
+- Authors: Ivan Jericevich, Patrick Chang, Tim Gebbie
+- Function: Optimisation heursitic for agent-based models
+- Structure:
+    1. Structures
+    2. Nelder-Mead
+    3. Trace
+    4. Optimization
+    5. API
+- Examples:
+    Optimize(NonDifferentiable(x -> (1.0 - x[1])^2 + 100.0 * (x[2] - x[1]^2)^2, [0.0, 0.0]), [0.0, 0.0], Options(show_trace = true, ta_rounds = 5, f_abstol = 5.0, ξ = 0.2))
+=#
 using Printf
 import StatsBase: var
 import LinearAlgebra: rmul!

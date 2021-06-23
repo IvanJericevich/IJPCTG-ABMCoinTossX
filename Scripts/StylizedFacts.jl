@@ -14,10 +14,10 @@ StylizedFacts:
     LogReturnDistribution(:TickbyTick; lobFile = "Model2L1LOB", format = "png")
     LogReturnAutocorrelation(50, lobFile = "Model2L1LOB", format = "png")
     TradeSignAutocorrelation(20, lobFile = "Model2L1LOB", format = "png")
-    InterArrivalTimeDistribution("Model2L1LOB"; format = "png")
     ExtremeLogReturnPercentileDistribution(:TickbyTick, :Upper; lobFile = "Model2L1LOB", format = "png")
+    DepthProfile(depthProfile; format = "png")
+    InterArrivalTimeDistribution("Model2L1LOB"; format = "png")
     VPIN(data, 50, 10, Millisecond(60 * 30 * 1000))
-- TODO:
 - TODO: Insert plot annotations for the values of α when fitting power laws and excess kurtosis
 - TODO: Change font sizes
 =#
@@ -26,19 +26,20 @@ clearconsole()
 #---------------------------------------------------------------------------------------------------
 
 #----- Generate stylized facts -----#
-function StylizedFacts(orders::DataFrame, file::String; resolution = nothing, format::String = "pdf")
+function StylizedFacts(file1::String, file::String; resolution = nothing, format::String = "pdf")
     if isnothing(resolution)
         data = CSV.File(string("Data/", file, ".csv"), drop = [:MicroPrice, :Spread, :DateTime], missingstring = "missing") |> DataFrame
         logreturns = diff(log.(filter(x -> !ismissing(x), data[:, :MidPrice])))
+        orders = CSV.File(string("Data/", file1, ".csv"), missingstring = "missing", types = Dict(:Side => Symbol, :Type => Symbol)) |> DataFrame
     else
         data = CSV.File(string("Data/MidPrice ", resolution, " Bars.csv"), missingstring = "missing") |> DataFrame
         logreturns = diff(log.(filter(x -> !ismissing(x), data[:, :Close])))
     end
     LogReturnDistribution(logreturns; format = format)
     LogReturnAutocorrelation(logreturns, 500; format = format)
-    TradeSignAutocorrelation(orders, 100; format = format)
+    TradeSignAutocorrelation(orders, 50; format = format)
     ExtremeLogReturnPercentileDistribution(logreturns; format = format)
-    DepthProfile(bidProfile, askProfile; format = "png")
+    #DepthProfile(depthProfile; format = "png")
 end
 #---------------------------------------------------------------------------------------------------
 
@@ -123,10 +124,8 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Depth profile -----#
-DepthProfile(taqData, format = "png")
 function DepthProfile(profile::Array{Union{Missing, Int64}, 2}; format::String = "pdf")
     μ = map(i -> mean(skipmissing(profile[:, i])), 1:size(profile, 2))
-    return μ
     depthProfile = plot(-(1:7), μ[1:7], seriestype = [:scatter, :line], marker = (:blue, stroke(:blue), :utriangle), linecolor = :blue, label = ["" "Bid profile"], xlabel = "Price level of limit orders (<0: bids; >0: asks)", ylabel = "Volume", fg_legend = :transparent)
     plot!(depthProfile, 1:7, μ[8:14], seriestype = [:scatter, :line], marker = (:red, stroke(:red), :dtriangle), linecolor = :red, label = ["" "Ask profile"])
     savefig(depthProfile, string("Figures/DepthProfile.", format))

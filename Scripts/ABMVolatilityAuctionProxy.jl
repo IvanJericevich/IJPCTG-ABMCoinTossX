@@ -1,6 +1,30 @@
+#=
+ABMVolatilityAuctionProxy:
+- Julia version: 1.5.3
+- Authors: Ivan Jericevich, Patrick Chang, Tim Gebbie
+- Function: ABM setup for conducting simulations
+- Structure:
+    1. Structures
+    2. Initialize agents and their parameters
+    3. Agent rules
+	4. Update Moving Average
+	5. Update LOB state
+	6. Supplementary functions
+	7. Agent decision times
+	8. Simulation
+- Examples:
+	StartCoinTossX(build = false)
+	StartJVM()
+	gateway = Login(1, 1)
+	param = Parameters(Nᴸₜ = 1, Nᴸᵥ = 1, Nᴴ = 8, δ = 0.01, κ = 1, ν = 1.5, m₀ = 10000, σ = 0.1, T = Millisecond(3000 * 1000))
+	x = InjectSimulation(gateway, param)
+	Logout(gateway)
+	StopCoinTossX()
+	exit()
+=#
 using Random, Distributions, DataFrames, Dates, Sockets, Plots
-# include("CoinTossXUtilities.jl")
-# clearconsole()
+include("CoinTossXUtilities.jl")
+clearconsole()
 #---------------------------------------------------------------------------------------------------
 
 #----- Structures -----#
@@ -195,14 +219,10 @@ function UpdateLOBState!(LOB::LOBState, message)
 		if !isempty(LOB.bids)
 			LOB.bₜ = maximum(order -> order.price, values(LOB.bids))
 			totalBuyVolume = sum(order.volume for order in values(LOB.bids))
-		# else
-		# 	LOB.bₜ = LOB.aₜ - 50
 		end
 		if !isempty(LOB.asks)
 			LOB.aₜ = minimum(order -> order.price, values(LOB.asks))
 			totalSellVolume = sum(order.volume for order in values(LOB.asks))
-		# else
-		# 	LOB.aₜ = LOB.bₜ + 50
 		end
 	end
 	LOB.sₜ = abs(LOB.aₜ - LOB.bₜ)
@@ -325,19 +345,4 @@ function InjectSimulation(gateway, parameters; seed = 1)
     end
     return midprice
 end
-#---------------------------------------------------------------------------------------------------
-
-#----- Example -----#
-#=
-StartCoinTossX(build = false)
-StartJVM()
-gateway = Login(1, 1)
-
-param = Parameters(Nᴸₜ = 1, Nᴸᵥ = 1, Nᴴ = 8, δ = 0.01, κ = 1, ν = 1.5, m₀ = 10000, σ = 0.1, T = Millisecond(3000 * 1000))
-x = InjectSimulation(gateway, param) # First run, must start JVM
-
-Logout(gateway)
-StopCoinTossX()
-exit()
-=#
 #---------------------------------------------------------------------------------------------------
