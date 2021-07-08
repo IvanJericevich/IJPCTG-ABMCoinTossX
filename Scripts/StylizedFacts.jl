@@ -20,32 +20,34 @@ StylizedFacts:
     VPIN(data, 50, 10, Millisecond(60 * 30 * 1000))
 - TODO: Insert plot annotations for the values of α when fitting power laws and excess kurtosis
 - TODO: Change font sizes
+- TODO: WHat about mutliple trades in cointyossx l1lob but not in jse
+- TODO: SHould comparisons be ontop of each other or seperate
 =#
-using Distributions, CSV, Plots, DataFrames, StatsPlots, Dates, StatsBase, LaTeXStrings
+using Distributions, CSV, Plots, DataFrames, StatsPlots, Dates, StatsBase, LaTeXStrings, TimeSeries
 clearconsole()
 #---------------------------------------------------------------------------------------------------
 
 #----- Generate stylized facts -----#
-function StylizedFacts(file1::String, file::String; resolution = nothing, format::String = "pdf")
+function StylizedFacts(file1::String, file2::String; resolution = nothing, format::String = "pdf")
+    OHLCV("JSEL1LOB", resolution); OHLCV("CoinTossXL1LOB", resolution)
     if isnothing(resolution)
-        data = CSV.File(string("Data/", file, ".csv"), drop = [:MicroPrice, :Spread, :DateTime], missingstring = "missing") |> DataFrame
-        logreturns = diff(log.(filter(x -> !ismissing(x), data[:, :MidPrice])))
-        orders = CSV.File(string("Data/", file1, ".csv"), missingstring = "missing", types = Dict(:Side => Symbol, :Type => Symbol)) |> DataFrame
+        jsedata = CSV.File(string("Data/JSEL1LOB.csv"), drop = [:MicroPrice, :Spread, :DateTime], missingstring = "missing") |> DataFrame; cointossxdata = CSV.File(string("Data/CoinTossXL1LOB.csv"), drop = [:MicroPrice, :Spread, :DateTime], missingstring = "missing") |> DataFrame
+        jselogreturns = diff(log.(filter(x -> !ismissing(x), jsedata[:, :MidPrice]))); cointossxlogreturns = diff(log.(filter(x -> !ismissing(x), cointossxdata[:, :MidPrice])))
     else
-        data = CSV.File(string("Data/MidPrice ", resolution, " Bars.csv"), missingstring = "missing") |> DataFrame
-        logreturns = diff(log.(filter(x -> !ismissing(x), data[:, :Close])))
+        jsedata = CSV.File(string("Data/JSE ", resolution, " Bars.csv"), missingstring = "missing") |> DataFrame; cointossxdata = CSV.File(string("Data/CoinTossX ", resolution, " Bars.csv"), missingstring = "missing") |> DataFrame
+        jselogreturns = diff(log.(filter(x -> !ismissing(x), jsedata[:, :MidClose]))); cointossxlogreturns = diff(log.(filter(x -> !ismissing(x), cointossxdata[:, :MidClose])))
     end
     LogReturnDistribution(logreturns; format = format)
     LogReturnAutocorrelation(logreturns, 500; format = format)
-    TradeSignAutocorrelation(orders, 50; format = format)
+    TradeSignAutocorrelation(data, 50; format = format)
     ExtremeLogReturnPercentileDistribution(logreturns; format = format)
     #DepthProfile(depthProfile; format = "png")
 end
 #---------------------------------------------------------------------------------------------------
 
 #----- Extract OHLCV data -----#
-function OHLCV(lobFile::DataFrame, resolution)
-    l1lob = CSV.File(string("Data/", lobFile, ".csv"), drop = [:Price, :Side, :Spread], missingstring = "missing") |> DataFrame
+function OHLCV(lobFile::String, resolution)
+    l1lob = CSV.File(string("Data/", lobFile, ".csv"), missingstring = "missing", types = Dict(:Type => Symbol)) |> DataFrame
     barTimes = l1lob.DateTime[1]:resolution:l1lob.DateTime[end]
     open(string("Data/OHLCV.csv"), "w") do file
         println(file, "DateTime,MidOpen,MidHigh,MidLow,MidClose,MicroOpen,MicroHigh,MicroLow,MicroClose,Volume,VWAP")
@@ -57,7 +59,7 @@ function OHLCV(lobFile::DataFrame, resolution)
                 tradesBar = filter(x -> x.Type == :Market, bar)
                 midPriceOHLCV = string(bar.MidPrice[1], ",", maximum(skipmissing(bar.MidPrice)), ",", minimum(skipmissing(bar.MidPrice)), ",", bar.MidPrice[end])
                 microPriceOHLCV = string(bar.MicroPrice[1], ",", maximum(skipmissing(bar.MicroPrice)), ",", minimum(skipmissing(bar.MicroPrice)), ",", bar.MicroPrice[end])
-                vwap = !isempty(tradesBar) ? sum(tradesBar.Volume .* tradesBar.Price) / sum(tradesBar.Volume) : missing
+                vwap = !isempty(tradesBar) ? sum(tradesBar.TradeVol .* tradesBar.Trade) / sum(tradesBar.TradeVol) : missing
                 println(file, string(barTimes[t], ",", midPriceOHLCV, ",", microPriceOHLCV, ",", sum(bar.Volume), ",", vwap))
             end
         end
@@ -72,11 +74,9 @@ function LogReturnDistribution(logreturns::Vector{Float64}; format::String = "pd
     n = length(abslogreturns)
     empiricalcdf = ecdf(logreturns) |> x -> 1 .- x(abslogreturns)
     normalcdf = 1 .- cdf.(normalDistribution, abslogreturns)
-    index = minimum([findprev(x -> x > 0, empiricalcdf, n), findprev(x -> x > 0, empiricalcdf, n)])
+    index = minimum([findprev(x -> x > 0, empiricalcdf, n), findprev(x -> x > 0, normalcdf, n)])
     if index != n
-        deleteat!(abslogreturns, index:n)
-        deleteat!(empiricalcdf, index:n)
-        deleteat!(normalcdf, index:n)
+        deleteat!(abslogreturns, index:n); deleteat!(empiricalcdf, index:n); deleteat!(normalcdf, index:n)
     end
     distribution = histogram(logreturns, normalize = :pdf, fillcolor = :blue, linecolor = :blue, xlabel = "Log returns", ylabel = "Probability Density", label = "Empirical", legendtitle = "Empirical Distribution", legend = :bottomleft, legendfontsize = 5, legendtitlefontsize = 7, fg_legend = :transparent)
     plot!(distribution, normalDistribution, linecolor = :black, label = "Fitted Normal")

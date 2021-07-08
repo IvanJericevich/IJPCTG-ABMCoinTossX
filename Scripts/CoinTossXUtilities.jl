@@ -40,7 +40,7 @@ end
 function StartJVM()
     JavaCall.addClassPath(directory * "/CoinTossX/ClientSimulator/build/classes/main")
     JavaCall.addClassPath(directory * "/CoinTossX/ClientSimulator/build/install/ClientSimulator/lib/*.jar")
-    JavaCall.init()
+    JavaCall.init(["-Xmx2G", "-Xms2G", "-d64", "-server", "-XX:+UseStringDeduplication", "-Dagrona.disable.bounds.checks=true", "-XX:+UnlockDiagnosticVMOptions", "-XX:GuaranteedSafepointInterval=300000", "-XX:+UseG1GC", "-XX:+UseLargePages", "-XX:+OptimizeStringConcat", "-XX:+UseCondCardMark"])
     Juno.notification("JVM started"; kind = :Info, options = Dict(:dismissable => false))
 end
 #---------------------------------------------------------------------------------------------------

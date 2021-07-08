@@ -6,10 +6,6 @@ DataCleaning:
 - Structure:
     1. Cleaning functions
     2. Implement cleaning functions
-- Examples:
-    reverse!(times)
-    depthProfile = CleanData("TAQ_1.5")
-    VisualiseSimulation("TAQ", "L1LOB"; format = "png") #  startTime = 500, duration = 2200
 =#
 using CSV, DataFrames, Dates, ProgressMeter
 clearconsole()
@@ -67,80 +63,81 @@ function MakeDetailedTAQ(data::DataFrame) # Get micro-price, mid-price and inter
     # Create master dataframe to store all useful information
     master_df = DataFrame(TimeStamp = DateTime[], EventType = String[], Bid = Float64[], BidVol = Float64[], Ask = Float64[], AskVol = Float64[], Trade = Float64[], TradeVol = Float64[], MicroPrice = Float64[], MidPrice = Float64[], InterArrivals = Float64[])
     # Loop through each day and extract useful data
-    @showprogress "Building..." for j in 1:length(dates_unique)
-        # Create extract data from each day
-        tempday = dates_unique[j]
-        tempdata = data[findall(x -> x == tempday, dates), :]
-        # Size of data for the day
-        n = size(tempdata)[1]
-        # Initialise micro and mid price vectors
-        micro_price = zeros(n, 1)
-        mid_price = zeros(n, 1)
-        # Loop through data frame to make micro and mid price vectors
-        for i in 1:n
-            # Check what event type it is; only want bids and asks
-            if tempdata[:EventType][i] == "ASK"    # if it is an ask
-                # Get current ask and its volume
-                current_ask = tempdata[:Ask][i]
-                current_ask_vol = tempdata[:AskVol][i]
-                # Get index of current bid
-                indexof_current_best_bid = findlast(x -> x == "BID", tempdata[:EventType][1:i])
-                if isnothing(indexof_current_best_bid)    # no current bids in data; for start of dataset
-                    # There are no current bids, therefore micro and mid price are NaNs
-                    micro_price[i] = NaN
-                    mid_price[i] = NaN
-                else
-                    # Get the index of current bid
-                    indexof_current_best_bid = indexof_current_best_bid
-                    # Get current bid and its volume
-                    current_bid = tempdata[:Bid][indexof_current_best_bid]
-                    current_bid_vol = tempdata[:BidVol][indexof_current_best_bid]
-                    # Compute micro and mid price
-                    micro_price[i] = (current_bid_vol / (current_bid_vol + current_ask_vol)) * current_bid + (current_ask_vol / (current_bid_vol + current_ask_vol)) * current_ask
-                    mid_price[i] = 0.5*(current_bid + current_ask)
-                end
-            elseif tempdata[:EventType][i] == "BID"     # the event is a bid
-                # Get current bid and its volume
-                current_bid = tempdata[:Bid][i]
-                current_bid_vol = tempdata[:BidVol][i]
-                # Get index of current ask
-                indexof_current_best_ask = findlast(x -> x == "ASK", tempdata[:EventType][1:i])
-                if isnothing(indexof_current_best_ask)
-                    # There are no current asks, therefore micro and mid price are NaNs
-                    micro_price[i] = NaN
-                    mid_price[i] = NaN   # No current asks in data; for start of dataset
-                else
-                    # Get the index of current ask
-                    indexof_current_best_ask = indexof_current_best_ask
-                    # Get current ask and its volume
-                    current_ask = tempdata[:Ask][indexof_current_best_ask]
-                    current_ask_vol = tempdata[:AskVol][indexof_current_best_ask]
-                    # Compute micro and mid price
-                    micro_price[i] = (current_bid_vol / (current_bid_vol + current_ask_vol)) * current_bid + (current_ask_vol / (current_bid_vol + current_ask_vol)) * current_ask
-                    mid_price[i] = 0.5*(current_bid + current_ask)
-                end
+    #@showprogress "Building..." for j in 1:length(dates_unique)
+    j = 1
+    # Create extract data from each day
+    tempday = dates_unique[j]
+    tempdata = data[findall(x -> x == tempday, dates), :]
+    # Size of data for the day
+    n = size(tempdata)[1]
+    # Initialise micro and mid price vectors
+    micro_price = zeros(n, 1)
+    mid_price = zeros(n, 1)
+    # Loop through data frame to make micro and mid price vectors
+    for i in 1:n
+        # Check what event type it is; only want bids and asks
+        if tempdata[i, :EventType] == "ASK"    # if it is an ask
+            # Get current ask and its volume
+            current_ask = tempdata[i, :Ask]
+            current_ask_vol = tempdata[i, :AskVol]
+            # Get index of current bid
+            indexof_current_best_bid = findlast(x -> x == "BID", tempdata[1:i, :EventType])
+            if isnothing(indexof_current_best_bid)    # no current bids in data; for start of dataset
+                # There are no current bids, therefore micro and mid price are NaNs
+                micro_price[i] = NaN
+                mid_price[i] = NaN
             else
-                if i > 2
-                    # The event is a trade. Can't use NaN as that means at least one side of order book is empty
-                    micro_price[i] = micro_price[i-1]
-                    mid_price[i] = mid_price[i-1]
-                end
+                # Get the index of current bid
+                indexof_current_best_bid = indexof_current_best_bid
+                # Get current bid and its volume
+                current_bid = tempdata[indexof_current_best_bid, :Bid]
+                current_bid_vol = tempdata[indexof_current_best_bid, :BidVol]
+                # Compute micro and mid price
+                micro_price[i] = (current_bid_vol / (current_bid_vol + current_ask_vol)) * current_bid + (current_ask_vol / (current_bid_vol + current_ask_vol)) * current_ask
+                mid_price[i] = 0.5*(current_bid + current_ask)
+            end
+        elseif tempdata[i, :EventType] == "BID"     # the event is a bid
+            # Get current bid and its volume
+            current_bid = tempdata[i, :Bid]
+            current_bid_vol = tempdata[i, :BidVol]
+            # Get index of current ask
+            indexof_current_best_ask = findlast(x -> x == "ASK", tempdata[1:i, :EventType])
+            if isnothing(indexof_current_best_ask)
+                # There are no current asks, therefore micro and mid price are NaNs
+                micro_price[i] = NaN
+                mid_price[i] = NaN   # No current asks in data; for start of dataset
+            else
+                # Get the index of current ask
+                indexof_current_best_ask = indexof_current_best_ask
+                # Get current ask and its volume
+                current_ask = tempdata[indexof_current_best_ask, :Ask]
+                current_ask_vol = tempdata[indexof_current_best_ask, :AskVol]
+                # Compute micro and mid price
+                micro_price[i] = (current_bid_vol / (current_bid_vol + current_ask_vol)) * current_bid + (current_ask_vol / (current_bid_vol + current_ask_vol)) * current_ask
+                mid_price[i] = 0.5*(current_bid + current_ask)
+            end
+        else
+            if i > 2
+                # The event is a trade. Can't use NaN as that means at least one side of order book is empty
+                micro_price[i] = micro_price[i-1]
+                mid_price[i] = mid_price[i-1]
             end
         end
-        # Initialise vector of inter-arrivals and mid_price change
-        τ = fill(NaN, n, 1)
-        # Compute inter-arrivals
-        TradeInds = findall(x -> x == "TRADE", tempdata[:EventType])
-        TradeTimes = tempdata[:TimeStamp][TradeInds]
-        inter_arrivals = diff(datetime2unix.(TradeTimes))
-        τ[TradeInds[1:end-1]] = inter_arrivals
-        # Push the data into master dataframe
-        for i in 1:n
-            temp = (tempdata[i,1], tempdata[i,2], tempdata[i,3], tempdata[i,4], tempdata[i,5],
-            tempdata[i,6], tempdata[i,7], tempdata[i,8], micro_price[i], mid_price[i], τ[i])
-            push!(master_df, temp)
-        end
     end
+    # Initialise vector of inter-arrivals and mid_price change
+    τ = fill(NaN, n, 1)
+    # Compute inter-arrivals
+    TradeInds = findall(x -> x == "TRADE", tempdata[!, :EventType])
+    TradeTimes = tempdata[TradeInds, :TimeStamp]
+    inter_arrivals = diff(datetime2unix.(TradeTimes))
+    τ[TradeInds[1:end-1]] = inter_arrivals
+    # Push the data into master dataframe
+    for i in 1:n
+        temp = (tempdata[i,1], tempdata[i,2], tempdata[i,3], tempdata[i,4], tempdata[i,5],
+        tempdata[i,6], tempdata[i,7], tempdata[i,8], micro_price[i], mid_price[i], τ[i])
+        push!(master_df, temp)
+    end
+    #end
     return master_df
 end
 function ClassifyTrades(data::DataFrame) # Classify the trades according to the Lee-Ready rule
@@ -226,12 +223,28 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Implement cleaning functions -----#
-function GetCleanedData(ticker::String)
-    data = CSV.read("Test Data/JSE/Raw/JSERAWTAQ"*ticker*".csv") # Read in data
+function GetCleanedData()
+    data = CSV.File("Data/JSERaw.csv") |> DataFrame # Read in data
     clean = MakeCleanTAQ(data) # Get data into usable format
     detail = MakeDetailedTAQ(clean) # Make additional information
     classified = ClassifyTrades(detail) # Classify trades using Lee-Ready
-    CSV.write("Test Data/JSE/Clean/JSECleanedTAQ"*ticker*".csv", classified) # Write the entire history as a CSV file
+    open("Data/JSEL1LOB.csv", "w") do file
+        println(file, "DateTime,Price,Volume,Type,Side,MidPrice,MicroPrice")
+        for line in eachrow(classified)
+            if line.EventType == "BID" && !isnan(line.Bid)
+                !isnan(line.MidPrice) ? println(file, string(line.TimeStamp, ",", line.Bid, ",", line.BidVol, ",Limit,1,", line.MidPrice, ",", line.MicroPrice)) : println(file, string(line.TimeStamp, ",", line.Bid, ",", line.BidVol, ",Limit,1,missing,missing"))
+            end
+            if line.EventType == "ASK" && !isnan(line.Ask)
+                !isnan(line.MidPrice) ? println(file, string(line.TimeStamp, ",", line.Ask, ",", line.AskVol, ",Limit,-1,", line.MidPrice, ",", line.MicroPrice)) : println(file, string(line.TimeStamp, ",", line.Ask, ",", line.AskVol, ",Limit,-1,missing,missing"))
+            end
+            if line.EventType == "TRADE"
+                if line.TradeSign == "BuyerInitiated"
+                    println(file, string(line.TimeStamp, ",", line.Trade, ",", line.TradeVol, ",Market,1,missing,missing"))
+                else
+                    println(file, string(line.TimeStamp, ",", line.Trade, ",", line.TradeVol, ",Market,-1,missing,missing"))
+                end
+            end
+        end
+    end
 end
-GetCleanedData("SBK"); GetCleanedData("NPN"); GetCleanedData("SLM"); GetCleanedData("ABG"); GetCleanedData("AGL"); GetCleanedData("BTI"); GetCleanedData("FSR"); GetCleanedData("NED"); GetCleanedData("SHP"); GetCleanedData("SOL")
 #---------------------------------------------------------------------------------------------------

@@ -9,11 +9,11 @@ Moments:
     3. GPH estimator
     4. Hill estimator
 =#
-import HypothesisTests.ADFTest
+import HypothesisTests: ADFTest, ApproximateTwoSampleKSTest
 import Statistics: mean, quantile, std
 import StatsBase.kurtosis
 import GLM: lm, coef
-using ARCHModels, Polynomials, ProgressMeter, CSV, StatsPlots, DataFrames
+using ARCHModels, Polynomials
 #---------------------------------------------------------------------------------------------------
 
 #----- Moments structure -----#
@@ -21,26 +21,27 @@ struct Moments # Moments of log-returns
     μ::Float64 # Mean
     σ::Float64 # Standard deviation
     κ::Float64 # Kurtosis
+    ks::Float64 # Kolmogorov-Smirnov test statistic for the difference between distributions
     hurst::Float64 # Hurst exponent: hurst < 0.5 => mean reverting; hurst == 0.5 => random walk; hurst > 0.5 => momentum
     gph::Float64 # GPH estimator representing long-range dependence
     adf::Float64 # ADF statistic representing random walk property of returns
     garch::Float64 # GARCH paramaters representing short-range dependence
     hill::Float64 # Hill estimator
-    function Moments(x)
-        logreturns = diff(log.(x))
-        μ = mean(logreturns); σ = std(logreturns); κ = kurtosis(logreturns)
-        hurst = HurstExponent(logreturns)
-        gph = GPH(abs.(logreturns))
-        adf = ADFTest(logreturns, :none, 0).stat
-        garch = sum(coef(ARCHModels.fit(GARCH{1, 1}, logreturns))[2:3])
-        hill = HillEstimator(logreturns[findall(x -> (x >= quantile(logreturns, 0.95)) && (x > 0), logreturns)], 50)
-        new(μ, σ, κ, hurst, gph, adf, garch, hill)
+    function Moments(logreturns1::Vector{Float64}, logreturns2::Vector{Float64})
+        μ = mean(logreturns1); σ = std(logreturns1); κ = kurtosis(logreturns1)
+        ks = ApproximateTwoSampleKSTest(logreturns1, logreturns2).δ
+        hurst = HurstExponent(logreturns1)
+        gph = GPH(abs.(logreturns1))
+        adf = ADFTest(logreturns1, :none, 0).stat
+        garch = sum(coef(ARCHModels.fit(GARCH{1, 1}, logreturns1))[2:3])
+        hill = HillEstimator(logreturns1[findall(x -> (x >= quantile(logreturns1, 0.95)) && (x > 0), logreturns1)], 50)
+        new(μ, σ, κ, ks, hurst, gph, adf, garch, hill)
     end
 end
 #---------------------------------------------------------------------------------------------------
 
 #----- Hurst exponent -----#
-function HurstExponent(x, d = 50)
+function HurstExponent(x, d = 100)
     N = length(x)
     if mod(N, 2) != 0 x = push!(x, (x[N - 1] + x[N]) / 2); N += 1 end
     N₁ = N₀ = min(floor(0.99 * N), N-1); dv = Divisors(N₁, d)

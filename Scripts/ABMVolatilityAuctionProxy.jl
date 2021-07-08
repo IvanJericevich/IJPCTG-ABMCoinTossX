@@ -62,6 +62,7 @@ mutable struct LOBState
     sₜ::Int64 # Current spread
     ρₜ::Float64 # Current order imbalance
     mₜ::Float64 # Current mid-price
+    microPrice::Float64 # Current micro-price
 	priceReference::Int64 # Price reference - last traded price
     bₜ::Int64 # Best bid
     aₜ::Int64 # Best ask
@@ -214,8 +215,12 @@ function UpdateLOBState!(LOB::LOBState, message)
 	totalBuyVolume = 0; totalSellVolume = 0
 	if !isempty(LOB.bids) && !isempty(LOB.asks)
 		LOB.bₜ = maximum(order -> order.price, values(LOB.bids)); LOB.aₜ = minimum(order -> order.price, values(LOB.asks))
+		bidVolume = sum(order.volume for order in values(LOB.bids) if order.price == LOB.bₜ)
+		askVolume = sum(order.volume for order in values(LOB.asks) if order.price == LOB.aₜ)
+		LOB.microPrice = (LOB.bₜ * bidVolume + LOB.aₜ * askVolume) / (bidVolume + askVolume)
 		totalBuyVolume = sum(order.volume for order in values(LOB.bids)); totalSellVolume = sum(order.volume for order in values(LOB.asks))
 	else
+		LOB.microPrice = NaN
 		if !isempty(LOB.bids)
 			LOB.bₜ = maximum(order -> order.price, values(LOB.bids))
 			totalBuyVolume = sum(order.volume for order in values(LOB.bids))
@@ -287,9 +292,9 @@ function InjectSimulation(gateway, parameters; seed = 1)
     (HFagents, chartists, fundamentalists) = InitializeAgents(parameters) # Initialize the agents
     data = CreateAgentDecisions(parameters, HFagents, chartists, fundamentalists) # Initialize decision times
     # Initialize LOB state and MA
-    LOB = LOBState(100, 0, parameters.m₀, parameters.m₀, 9950, 10050, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
+    LOB = LOBState(100, 0, parameters.m₀, NaN, parameters.m₀, 9950, 10050, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
     MA = MovingAverage(parameters.m₀, [Millisecond(0); data.RelativeTime], mean(diff(Dates.value.([Millisecond(0); data.RelativeTime]))))
-    times = Vector{Millisecond}(); midprice = Vector{Float64}() # Setup storage for time series of mid-price
+    times = Vector{Millisecond}(); microprice = Vector{Float64}() # Setup storage for time series of mid-price
 	StartLOB(gateway)
     receiver = UDPSocket()
     connected = bind(receiver, ip"127.0.0.1", 1234)
@@ -334,15 +339,23 @@ function InjectSimulation(gateway, parameters; seed = 1)
                     #println(LOB.sₜ)
 					#println(string(LOB.priceReference, "      ", LOB.bₜ, "       ", LOB.aₜ))
                     #push!(times, data[i, :Time])
-                    push!(midprice, LOB.mₜ)
+					if LOB.microPrice < 0
+						throw(error("Negative price"))
+					else
+						push!(microprice, LOB.microPrice)
+					end
                 end
                 @info "Trading" progress=(data.RelativeTime[i] / data.RelativeTime[end]) _id=id # Update progress
             end
         end
-    finally
-        close(receiver)
+	catch e
+		println(e)
+		close(receiver)
         EndLOB(gateway)
+		return  Vector{Float64}()
     end
-    return midprice
+	close(receiver)
+	EndLOB(gateway)
+    return microprice
 end
 #---------------------------------------------------------------------------------------------------

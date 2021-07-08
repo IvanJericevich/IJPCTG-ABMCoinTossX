@@ -9,8 +9,6 @@ NMTA:
     3. Trace
     4. Optimization
     5. API
-- Examples:
-    Optimize(NonDifferentiable(x -> (1.0 - x[1])^2 + 100.0 * (x[2] - x[1]^2)^2, [0.0, 0.0]), [0.0, 0.0], Options(show_trace = true, ta_rounds = 5, f_abstol = 5.0, ξ = 0.2))
 =#
 using Printf
 import StatsBase: var
@@ -20,30 +18,8 @@ import NLSolversBase: value, value!, value!!, NonDifferentiable
 #---------------------------------------------------------------------------------------------------
 
 #----- Structures -----#
-struct OptimizationState{Tf <: Real}
-    iteration::Int64
-    value::Tf
-    g_norm::Tf
-    metadata::Dict
-end
-const OptimizationTrace{Tf} = Vector{OptimizationState{Tf}}
-mutable struct OptimizationResults{Tx <: AbstractArray, Tf <: Real}
-    initial_x::Tx
-    minimizer::Tx
-    minimum::Tf
-    iterations::Int64
-    iteration_converged::Bool
-    f_abstol::Float64
-    g_converged::Bool
-    g_abstol::Float64
-    f_increased::Bool
-    trace::OptimizationTrace{Tf}
-    time_limit::Float64
-    time_run::Float64
-    stopped_by_time_limit::Bool
-end
 struct Options{T <: Real}
-    f_abstol::T
+    f_reltol::Vector{Float64}
     g_abstol::T
     iterations::Int64
     store_trace::Bool
@@ -55,9 +31,16 @@ struct Options{T <: Real}
     ξ::Float64
     ta_rounds::Int64
 end
-function Options(; f_abstol::Real = 0.0, ta_rounds::Int64 = 0, g_abstol::Real = 1e-8, iterations::Int64 = 1_000, store_trace::Bool = false, trace_simplex::Bool = false, show_trace::Bool = false, extended_trace::Bool = false, show_every::Int64 = 1, time_limit = NaN, ξ = 0.0)
-    Options(f_abstol, g_abstol, iterations, store_trace, trace_simplex, show_trace, extended_trace, show_every, Float64(time_limit), ξ, ta_rounds)
+function Options(; f_reltol::Vector{Float64} = Vector{Float64}(), ta_rounds::Int64 = 0, g_abstol::Real = 1e-8, iterations::Int64 = 1_000, store_trace::Bool = false, trace_simplex::Bool = false, show_trace::Bool = false, extended_trace::Bool = false, show_every::Int64 = 1, time_limit = NaN, ξ = 0.0)
+    Options(f_reltol, g_abstol, iterations, store_trace, trace_simplex, show_trace, extended_trace, show_every, Float64(time_limit), ξ, ta_rounds)
 end
+struct OptimizationState{Tf <: Real}
+    iteration::Int64
+    value::Tf
+    g_norm::Tf
+    metadata::Dict
+end
+const OptimizationTrace{Tf} = Vector{OptimizationState{Tf}}
 abstract type Simplexer end
 struct AffineSimplexer <: Simplexer
     a::Float64
@@ -116,6 +99,22 @@ mutable struct NelderMeadState{Tx <: AbstractArray, T <: Real, Tfs <: AbstractAr
     δ::T
     step_type::String
 end
+mutable struct OptimizationResults{Tx <: AbstractArray, Tf <: Real}
+    initial_x::Tx
+    minimizer::Tx
+    minimum::Tf
+    iterations::Int64
+    iteration_converged::Bool
+    f_reltol::Vector{Float64}()
+    g_converged::Bool
+    g_abstol::Float64
+    f_increased::Bool
+    trace::OptimizationTrace{Tf}
+    time_limit::Float64
+    time_run::Float64
+    stopped_by_time_limit::Bool
+    end_state::NelderMeadState
+end
 #---------------------------------------------------------------------------------------------------
 
 #----- Nelder-Mead -----#
@@ -168,27 +167,21 @@ function InitialState(nelder_mead::NelderMead, f::NonDifferentiable, initial_x::
         i_order, # Store a vector of rankings of objective values
         T(α), T(β), T(γ), T(δ), "initial")
 end
-function ThresholdAccepting!(f::NonDifferentiable, state::NelderMeadState, thresholds)
-    println("Hello")
+function ThresholdAccepting!(f::NonDifferentiable, state::NelderMeadState, τ::Float64)
     n, m = length(state.x), state.m
-    for τ in thresholds # Should the solution not be generated from the best
-        for param_index in 1:n # Perturb each parameter
-            perturbation = (rand() - 0.5) * (sum(getindex.(state.simplex, param_index)) / n) # (sum(state.simplex[i][param_index] for i in 1:n) / n)
-            for i in 2:m # Never perturb the best simplex?????????? Iterate over each solution
-                @. state.x_cache = state.simplex[state.i_order[i]] + perturbation
-                f_perturb = value(f, state.x_cache)
-                if f_perturb < state.f_simplex[state.i_order[1]] + τ # Only accept if perturbation is now worse than the best + some threshold
-                    # Update state
-                    copyto!(state.simplex[state.i_order[i]], state.x_cache) # Replace solution with new solution
-                    @inbounds state.f_simplex[state.i_order[i]] = f_perturb # Replace objective value with new value
-                end
-            end
-        end
+    paramindex = rand(1:n)
+    perturbation = (rand() - 0.5) * (sum(getindex.(state.simplex, paramindex)) / n) # (sum(state.simplex[i][param_index] for i in 1:n) / n)
+    @. state.x_cache = state.simplex[state.i_order[paramindex]] + perturbation
+    f_perturb = value(f, state.x_cache)
+    if f_perturb < state.f_simplex[state.i_order[1]] + τ # Only accept if perturbation is now worse than the best + some threshold
+        # Update state
+        copyto!(state.simplex[state.i_order[i]], state.x_cache) # Replace solution with new solution
+        @inbounds state.f_simplex[state.i_order[i]] = f_perturb # Replace objective value with new value
     end
     state.step_type = "thresholding"
     sortperm!(state.i_order, state.f_simplex) # Sort indeces of simplexes in ascending order of objective value
 end
-function UpdateState!(f::NonDifferentiable, state::NelderMeadState)
+function SimplexSearch!(f::NonDifferentiable, state::NelderMeadState, τ::Float64)
     shrink = false; n, m = length(state.x), state.m # Augment the iteration counter
     centroid!(state.x_centroid, state.simplex, state.i_order[m])
     copyto!(state.x_lowest, state.simplex[state.i_order[1]])
@@ -200,11 +193,11 @@ function UpdateState!(f::NonDifferentiable, state::NelderMeadState)
     # Compute a reflection
     @. state.x_reflect = state.x_centroid + state.α * (state.x_centroid - state.x_highest)
     f_reflect = value(f, state.x_reflect)
-    if f_reflect < state.f_lowest # Reflection has improved the objective
+    if f_reflect < state.f_lowest + τ # Reflection has improved the objective
         # Compute an expansion
         @. state.x_cache = state.x_centroid + state.β * (state.x_reflect - state.x_centroid)
         f_expand = value(f, state.x_cache)
-        if f_expand < f_reflect # Expansion has improved the objective
+        if f_expand < f_reflect + τ # Expansion has improved the objective
             # Update state
             copyto!(state.simplex[state.i_order[m]], state.x_cache)
             @inbounds state.f_simplex[state.i_order[m]] = f_expand
@@ -221,18 +214,18 @@ function UpdateState!(f::NonDifferentiable, state::NelderMeadState)
             state.i_order[i] = state.i_order[i-1]
         end
         state.i_order[1] = i_highest
-    elseif f_reflect < f_second_highest # Reflection is better than the second worst
+    elseif f_reflect < f_second_highest + τ # Reflection is better than the second worst
         # Update state
         copyto!(state.simplex[state.i_order[m]], state.x_reflect)
         @inbounds state.f_simplex[state.i_order[m]] = f_reflect
         state.step_type = "reflection"
         sortperm!(state.i_order, state.f_simplex)
     else
-        if f_reflect < f_highest # Reflection is better than the worst but mot better than the second worst
+        if f_reflect < f_highest + τ # Reflection is better than the worst but mot better than the second worst
             # Outside contraction
             @. state.x_cache = state.x_centroid + state.γ * (state.x_reflect - state.x_centroid)
             f_outside_contraction = value(f, state.x_cache)
-            if f_outside_contraction < f_reflect
+            if f_outside_contraction < f_reflect + τ
                 # Update state
                 copyto!(state.simplex[state.i_order[m]], state.x_cache)
                 @inbounds state.f_simplex[state.i_order[m]] = f_outside_contraction
@@ -245,7 +238,7 @@ function UpdateState!(f::NonDifferentiable, state::NelderMeadState)
             # Inside constraction
             @. state.x_cache = state.x_centroid - state.γ *(state.x_reflect - state.x_centroid)
             f_inside_contraction = value(f, state.x_cache)
-            if f_inside_contraction < f_highest
+            if f_inside_contraction < f_highest + τ
                 # Update state
                 copyto!(state.simplex[state.i_order[m]], state.x_cache)
                 @inbounds state.f_simplex[state.i_order[m]] = f_inside_contraction
@@ -256,8 +249,7 @@ function UpdateState!(f::NonDifferentiable, state::NelderMeadState)
             end
         end
     end
-    # Apply shrinkage if the worst could not be improved
-    if shrink
+    if shrink # Apply shrinkage if the worst could not be improved
         for i = 2:m
             ord = state.i_order[i]
             # Update state
@@ -284,12 +276,12 @@ function PostProcess!(f::NonDifferentiable, state::NelderMeadState)
 end
 # Convergence
 function AssessConvergence(state::NelderMeadState, options::Options)
-    g_converged = state.nm_x <= options.g_abstol # Stopping criterior
+    g_converged = state.nm_x <= options.g_abstol # Stopping criterion
     return g_converged, false
 end
-function InitialConvergence(f::NonDifferentiable, state::NelderMeadState, initial_x::Tx, options::Options) where Tx <: AbstractArray
-    nmo = NelderMeadObjective(state.f_simplex, state.m, length(initial_x))
-    !isfinite(value(f)) || nmo <= options.g_abstol#, !isfinite(nmo)
+function InitialConvergence(state::NelderMeadState, initial_x::AbstractArray, options::Options) #f::NonDifferentiable,
+    nm_x = NelderMeadObjective(state.f_simplex, state.m, length(initial_x))
+    nm_x <= options.g_abstol#, !isfinite(nmo)   !isfinite(value(f)) ||
 end
 #---------------------------------------------------------------------------------------------------
 
@@ -322,10 +314,10 @@ end
 function Optimize(f::NonDifferentiable{Tf, Tx}, initial_x::Tx, options::Options{T} = Options(), state::NelderMeadState = InitialState(NelderMead(), f, initial_x)) where {Tx <: AbstractArray, Tf <: Real, T <: Real}
     t₀ = time() # Initial time stamp used to control early stopping by options.time_limit
     tr = OptimizationTrace{Tf}() # Store optimization trace
-    thresholds = options.ta_rounds != 0 ? reverse(range(0, stop = options.f_abstol, length = options.ta_rounds)[2:end]) : nothing
+    thresholds = options.ta_rounds != 0 ? reduce(vcat, fill.(options.f_reltol, options.ta_rounds)) : nothing
     tracing = options.store_trace || options.show_trace || options.extended_trace
     stopped, stopped_by_time_limit, f_increased = false, false, false
-    g_converged = InitialConvergence(f, state, initial_x, options) # Converged if criterion is met or f is infinite
+    g_converged = InitialConvergence(state, initial_x, options) # Converged if criterion is met
     iteration = 0 # Counter
     if options.show_trace # Print header
         @printf "Iter     Function value    √(Σ(yᵢ-ȳ)²)/n \n"
@@ -336,9 +328,9 @@ function Optimize(f::NonDifferentiable{Tf, Tx}, initial_x::Tx, options::Options{
     while !g_converged && !stopped_by_time_limit && iteration < options.iterations
         iteration += 1
         if rand() < options.ξ
-            ThresholdAccepting!(f, state, thresholds)
+            ThresholdAccepting!(f, state, thresholds[iteration] * state.f_lowest)
         else
-            UpdateState!(f, state)
+            SimplexSearch!(f, state, thresholds[iteration] * state.f_lowest) # Precentage of best solution
         end
         g_converged, f_increased = AssessConvergence(state, options)
         if tracing
@@ -348,24 +340,25 @@ function Optimize(f::NonDifferentiable{Tf, Tx}, initial_x::Tx, options::Options{
         stopped_by_time_limit = t - t₀ > options.time_limit
     end
     PostProcess!(f, state)
-    return OptimizationResults{Tx, Tf}(initial_x, state.x, value(f), iteration, iteration == options.iterations, Float64(options.f_abstol), g_converged, Float64(options.g_abstol), f_increased, tr, options.time_limit, t - t₀, stopped_by_time_limit)
+    return OptimizationResults{Tx, Tf}(initial_x, state.x, value(f), iteration, iteration == options.iterations, options.f_reltol, g_converged, Float64(options.g_abstol), f_increased, tr, options.time_limit, t - t₀, stopped_by_time_limit, state)
 end
 #---------------------------------------------------------------------------------------------------
 
 #----- API -----#
 minimizer(r::OptimizationResults) = r.minimizer
-minimum(r::OptimizationResults) = r.minimum
+optimum(r::OptimizationResults) = r.minimum
 iterations(r::OptimizationResults) = r.iterations
 iteration_limit_reached(r::OptimizationResults) = r.iteration_converged
 trace(r::OptimizationResults) = length(r.trace) > 0 ? r.trace : error("No trace in optimization results. To get a trace, run optimize() with store_trace = true.")
 converged(r::OptimizationResults) = r.g_converged
-f_abstol(r::OptimizationResults) = r.f_abstol
+f_reltol(r::OptimizationResults) = r.f_reltol
 g_abstol(r::OptimizationResults) = r.g_abstol
 initial_state(r::OptimizationResults) = r.initial_x
 time_limit(r::OptimizationResults) = r.time_limit
 time_run(r::OptimizationResults) = r.time_run
 g_norm_trace(r::OptimizationResults) = [ state.g_norm for state in trace(r) ]
 f_trace(r::OptimizationResults) = [ state.value for state in trace(r) ]
+end_state(r::OptimizationResults) = r.end_state
 function centroid_trace(r::OptimizationResults)
     tr = trace(r)
     !haskey(tr[1].metadata, "centroid") && error("Trace does not contain centroid. To get a trace of the centroid, run optimize() with extended_trace = true")
@@ -391,7 +384,7 @@ function Base.show(io::IO, r::OptimizationResults)
         failure_string *= " (exceeded time limit of $(time_limit(r)))"
     end
     @printf io " * Status: %s\n\n" converged(r) ? "success" : failure_string
-    @printf io " * Final objective value:     %e\n" minimum(r)
+    @printf io " * Final objective value:     %e\n" optimum(r)
     @printf io "\n"
     @printf io " * Convergence measures\n"
     @printf io "    √(Σ(yᵢ-ȳ)²)/n %s %.1e\n" converged(r) ? "≤" : "≰" g_abstol(r)
@@ -419,25 +412,3 @@ function Base.show(io::IO, t::OptimizationState{<:Real})
     return
 end
 #---------------------------------------------------------------------------------------------------
-
-#=
-z = NonDifferentiable(x -> (1.0 / 2.0) * (x[1]^2 + 0.9 * x[2]^2), [127.0, 921.0])
-a = Optimize(z, [127.0, 921.0])
-minimizer(a)
-time_run(a)
-trace(a)
-
-function reset!(state::NelderMeadState, obj, x)
-    state.simplex = simplexer(method.initial_simplex, x)
-    value!(obj, first(state.simplex))
-    state.f_simplex[1] = value(obj)
-    for i in 2:length(state.simplex)
-        state.f_simplex[i] = value(obj, state.simplex[i])
-    end
-    # Get the indices that correspond to the ordering of the f values at the vertices. i_order[1] is the index in the simplex of the vertex with the lowest function value, and i_order[end] is the index in the simplex of the vertex with the highest function value
-    state.i_order = sortperm(state.f_simplex)
-end
-
-value(z, [2, 2])
-a = optimize(x -> (1.0 / 2.0) * (x[1]^2 + 0.9 * x[2]^2), [127.0, 921.0], NelderMead())
-=#

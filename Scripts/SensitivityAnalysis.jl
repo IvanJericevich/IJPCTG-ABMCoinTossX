@@ -20,7 +20,7 @@ import HypothesisTests.ADFTest
 import Statistics: mean, quantile, std
 import StatsBase.kurtosis
 import GLM: lm, coef
-using ARCHModels, Polynomials, ProgressMeter, CSV, StatsPlots, DataFrames
+using ARCHModels, Polynomials, ProgressMeter, CSV, DataFrames
 include("CoinTossXUtilities.jl"); include("ABMVolatilityAuctionProxy.jl")
 #---------------------------------------------------------------------------------------------------
 
@@ -48,7 +48,7 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Hurst exponent -----#
-function HurstExponent(x, d = 50)
+function HurstExponent(x, d = 100)
     N = length(x)
     if mod(N, 2) != 0 x = push!(x, (x[N - 1] + x[N]) / 2); N += 1 end
     N₁ = N₀ = min(floor(0.99 * N), N-1); dv = Divisors(N₁, d)
@@ -129,21 +129,34 @@ end
 
 #----- Sensitivity analysis -----#
 function SensitivityAnalysis()
-    parameterCombinations = CSV.File("Data/Moments.csv", drop = [:Mean, :StandardDeviation, :Kurtosis, :Hurst, :GPH, :ADF, :GARCH, :Hill]) |> DataFrame
+    parameterCombinations = CSV.File("Moments.csv", drop = [:Mean, :StandardDeviation, :Kurtosis, :Hurst, :GPH, :ADF, :GARCH, :Hill]) |> DataFrame
     StartJVM()
     gateway = Login(1, 1)
-    open("Data/Results.csv", "w") do file
-        println(file, "Nt,Nv,Nh,Lambdal,Lambdah,LambdalMin,LambdalMax,LambdahMin,LambdahMax,Delta,Kappa,Nu,M0,Sigma,T,Mu,Sigma,Kappa,Hurst,GPH,ADF,GARCH,Hill") # Header
-        @showprogress "Computing:" for i in 1:nrow(parameterCombinations)
-            parameters = Parameters(Nᴸₜ = parameterCombinations[i, :Nt], Nᴸᵥ = parameterCombinations[i, :Nv], Nᴴ = parameterCombinations[i, :Nh], δ = parameterCombinations[i, :Delta], κ = parameterCombinations[i, :Kappa], ν = parameterCombinations[i, :Nu], σ = parameterCombinations[i, :Sigma])
-            midPrice = InjectSimulation(gateway, parameters)
-            filter!(x -> !ismissing(x), midPrice)
+    open("Results(3051-3125).csv", "w") do file
+        println(file, "Side,Nt,Nv,Nh,Lambdal,Lambdah,LambdalMin,LambdalMax,LambdahMin,LambdahMax,Delta,Kappa,Nu,M0,Sigma,T,Mu,Sigma,Kappa,Hurst,GPH,ADF,GARCH,Hill") # Header
+        @showprogress "Computing:" for i in 3051:3125
+            if iszero(mod(i - 3050, 30))
+                Logout(gateway)
+                sleep(1)
+                StopCoinTossX()
+                sleep(1)
+                StartCoinTossX(build = false)
+                sleep(17)
+                gateway = Login(1, 1)
+                sleep(2)
+            end
+            parameters = Parameters(Nᴸₜ = parameterCombinations[i, :Nt], Nᴸᵥ = parameterCombinations[i, :Nv], Nᴴ = parameterCombinations[i, :Nh], δ = parameterCombinations[i, :Delta], κ = parameterCombinations[i, :Kappa], ν = parameterCombinations[i, :Nu], σ = parameterCombinations[i, :Sigma], T = Millisecond(3600 * 2 * 1000))
             try
-                moments = Moments(midPrice)
-                println(file, string(parameters.Nᴸₜ, ",", parameters.Nᴸᵥ, ",", parameters.Nᴴ, ",", parameters.λᴸ, ",", parameters.λᴴ, ",", parameters.λᴸmin, ",", parameters.λᴸmax, ",", parameters.λᴴmin, ",", parameters.λᴴmax, ",", parameters.δ, ",", parameters.κ, ",", parameters.ν, ",", parameters.m₀, ",", parameters.σ, ",", Dates.value(parameters.T), ",", moments.μ, ",", moments.σ, ",", moments.κ, ",", moments.hurst, ",", moments.gph, ",", moments.adf, ",", moments.garch, ",", moments.hill))
+                microPrice = InjectSimulation(gateway, parameters)
+                filter!(x -> !isnan(x), microPrice)
+                moments1 = Moments(microPrice[1:round(Int, length(microPrice)/2)])
+                moments2 = Moments(microPrice[round(Int, length(microPrice)/2):end])
+                println(file, string("1,", parameters.Nᴸₜ, ",", parameters.Nᴸᵥ, ",", parameters.Nᴴ, ",", parameters.λᴸ, ",", parameters.λᴴ, ",", parameters.λᴸmin, ",", parameters.λᴸmax, ",", parameters.λᴴmin, ",", parameters.λᴴmax, ",", parameters.δ, ",", parameters.κ, ",", parameters.ν, ",", parameters.m₀, ",", parameters.σ, ",", Dates.value(parameters.T), ",", moments1.μ, ",", moments1.σ, ",", moments1.κ, ",", moments1.hurst, ",", moments1.gph, ",", moments1.adf, ",", moments1.garch, ",", moments1.hill))
+                println(file, string("2,", parameters.Nᴸₜ, ",", parameters.Nᴸᵥ, ",", parameters.Nᴴ, ",", parameters.λᴸ, ",", parameters.λᴴ, ",", parameters.λᴸmin, ",", parameters.λᴸmax, ",", parameters.λᴴmin, ",", parameters.λᴴmax, ",", parameters.δ, ",", parameters.κ, ",", parameters.ν, ",", parameters.m₀, ",", parameters.σ, ",", Dates.value(parameters.T), ",", moments2.μ, ",", moments2.σ, ",", moments2.κ, ",", moments2.hurst, ",", moments2.gph, ",", moments2.adf, ",", moments2.garch, ",", moments2.hill))
             catch e
                 println(e)
-                println(file, string(parameters.Nᴸₜ, ",", parameters.Nᴸᵥ, ",", parameters.Nᴴ, ",", parameters.λᴸ, ",", parameters.λᴴ, ",", parameters.λᴸmin, ",", parameters.λᴸmax, ",", parameters.λᴴmin, ",", parameters.λᴴmax, ",", parameters.δ, ",", parameters.κ, ",", parameters.ν, ",", parameters.m₀, ",", parameters.σ, ",", Dates.value(parameters.T), ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN))
+                println(file, string("1,", parameters.Nᴸₜ, ",", parameters.Nᴸᵥ, ",", parameters.Nᴴ, ",", parameters.λᴸ, ",", parameters.λᴴ, ",", parameters.λᴸmin, ",", parameters.λᴸmax, ",", parameters.λᴴmin, ",", parameters.λᴴmax, ",", parameters.δ, ",", parameters.κ, ",", parameters.ν, ",", parameters.m₀, ",", parameters.σ, ",", Dates.value(parameters.T), ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN))
+                println(file, string("2,", parameters.Nᴸₜ, ",", parameters.Nᴸᵥ, ",", parameters.Nᴴ, ",", parameters.λᴸ, ",", parameters.λᴴ, ",", parameters.λᴸmin, ",", parameters.λᴸmax, ",", parameters.λᴴmin, ",", parameters.λᴴmax, ",", parameters.δ, ",", parameters.κ, ",", parameters.ν, ",", parameters.m₀, ",", parameters.σ, ",", Dates.value(parameters.T), ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN, ",", NaN))
             end
         end
     end
@@ -156,13 +169,13 @@ SensitivityAnalysis()
 
 #----- Visualisation -----#
 function MomentBoxPlot(; format::String = "pdf")
-    data = CSV.File("Data/Moments.csv", types = Dict(:Sigma => String, :Nu => String, :Kappa => String, :Delta => String, :Nh => String)) |> DataFrame |> x -> filter(y -> !isnan(y.Mean) && y.Nu in string.(collect(range(2, 3, length = 5))), x)
+    data = CSV.File("Data/MidPriceMoments.csv", types = Dict(:Sigma => String, :Nu => String, :Kappa => String, :Delta => String, :Nh => String)) |> DataFrame |> x -> filter(y -> y.Side == 1 && !isnan(y.Mean) && y.Nu in string.(collect(range(2, 3, length = 5))), x)
     parameters = [(:Sigma, "σ"), (:Nu, "ν"), (:Kappa, "κ"), (:Delta, "δ"), (:Nh, "N")]
     moments = [(:Kurtosis, "Kurtosis"), (:Hurst, "Hurst exponent"), (:GPH, "GPH estimator"), (:ADF, "ADF test statistic"), (:Hill, "Hill estimator")]#, (:GARCH, "Sum of GARCH(1, 1) parameters")
-    matrixPlot = plot(layout = (length(parameters), length(moments)), xrotation = 30, yrotation = 30, guidefontsize = 5, tickfontsize = 3, xlabel = ["" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "Kurtosis" "Hurst exponent" "GPH estimator" "ADF statistic" "Hill estimator"], ylabel = ["σ" "" "" "" "" "ν" "" "" "" "" "κ" "" "" "" "" "δ" "" "" "" "" "N" "" "" "" ""])
+    matrixPlot = plot(layout = (length(parameters), length(moments)), xrotation = 30, yrotation = 30, guidefontsize = 5, tickfontsize = 3, ylabel = ["Kurtosis" "" "" "" "" "Hurst exponent" "" "" "" "" "GPH estimator" "" "" "" "" "ADF statistic" "" "" "" "" "Hill estimator" "" "" "" ""], xlabel = ["" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "σ" "ν" "κ" "δ" "N"])
     counter = 1
-    for p in 1:length(parameters)
-        for m in 1:length(moments)
+    for m in 1:length(moments)
+        for p in 1:length(parameters)
             violin!(matrixPlot, data[:, parameters[p][1]], data[:, moments[m][1]], linealpha = 0, fillalpha = 0.8, fillcolor = :blue, subplot = counter, legend = false)
             boxplot!(matrixPlot, data[:, parameters[p][1]], data[:, moments[m][1]], fillalpha = 0, marker = (1, :black, stroke(:black)), linewidth = 0, linecolor = :black, subplot = counter, legend = false)
             counter += 1
@@ -170,48 +183,37 @@ function MomentBoxPlot(; format::String = "pdf")
     end
     savefig(matrixPlot, string("Figures/MatrixBoxplot.", format))
 end
-function MomentSurfacePlot(parameter1::Tuple{Symbol, String}, parameter2::Tuple{Symbol, String}, moment::Tuple{Symbol, String}; format::String = "pdf")
-    data = CSV.File("Data/Moments.csv") |> DataFrame |> x -> filter!(y -> !isnan(y.Mean), x) |> z -> groupby(z, [parameter1[1], parameter2[1]]) |> a -> combine(a, moment[1] => mean)
-    surface = plot(data[:, parameter1[1]], data[:, parameter2[1]], data[:, string(moment[1], "_mean")], seriestype = :surface, xlabel = parameter1[2], ylabel = parameter2[2], zlabel = moment[2])
-    savefig(surface, string("Figures/", parameter1[1], "-", parameter2[1], "-", moment[1], "Surface.", format))
+function MomentSurfacePlot(timeseries::Symbol, moment::Tuple{Symbol, String}; format::String = "pdf")
+    parameters = [(:Sigma, "σ"), (:Nu, "ν"), (:Kappa, "κ"), (:Delta, "δ"), (:Nh, "N")]
+    data = CSV.File(string("Data/", timeseries, "Moments.csv")) |> DataFrame |> x -> filter!(y -> !isnan(y.Mean), x)
+    if timeseries == :MicroPrice
+        filter!(y -> y.Side == 2, data)
+    end
+    gdf1 = groupby(data, first.(parameters[[4, 3]])) |> a -> combine(a, moment[1] => mean)
+    gdf2 = groupby(data, first.(parameters[[5, 2]])) |> a -> combine(a, moment[1] => mean)
+    surface = plot(layout = (1, 2))
+    plot!(surface, gdf1[:, parameters[4][1]], gdf1[:, parameters[3][1]], gdf1[:, string(moment[1], "_mean")], seriestype = :surface, xlabel = parameters[4][2], ylabel = parameters[4][2], zlabel = moment[2], subplot = 1, colorbar = false)
+    plot!(surface, gdf2[:, parameters[5][1]], gdf2[:, parameters[2][1]], gdf2[:, string(moment[1], "_mean")], seriestype = :surface, xlabel = parameters[5][2], ylabel = parameters[2][2], zlabel = moment[2], subplot = 2, colorbar = false)
+    savefig(surface, string("Figures/", timeseries, moment[1], "Surface.", format))
 end
 #---------------------------------------------------------------------------------------------------
 
 #----- Validation -----#
-function Validation(N::Int64, moment::Symbol)
-    data = CSV.File("Data/Moments.csv") |> DataFrame |> x -> filter!(y -> !isnan(y.Mean) && y.Nh == N, x)
+function Validation(gateway::TradingGateway, moment::Symbol)
+    data = CSV.File("Data/MicroPriceMoments.csv") |> DataFrame |> x -> filter!(y -> y.Side == 2 && y.Nh == 10 && !isnan(y.Mean), x)
     if moment == :GPH || moment == :ADF
         sort!(data, moment)
     else
         sort!(data, moment, rev = true)
     end
-    gateway = Login(1, 1)
-    for i in 1:10
+    for i in 1:5
         param = Parameters(Nᴸₜ = data[i, :Nt], Nᴸᵥ = data[i, :Nv], Nᴴ = data[i, :Nh], δ = data[i, :Delta], κ = data[i, :Kappa], ν = data[i, :Nu], σ = data[i, :Sigma], T = Millisecond(3600 * 2 * 1000))
         x = InjectSimulation(gateway, param)
         l = @layout([a b])
-        blah1 = plot(x, title = string(i, ": ", moment, ", N = ", N))
-        blah2 = plot(x[2000:end], title = string(i, ": ", moment, ", N = ", N))
+        blah1 = plot(x, title = string(i, ": ", moment)) # , ", N = ", N
+        blah2 = plot(x[round(Int, length(x)/2):end], title = string(i, ": ", moment)) # , ", N = ", N
         simulation = plot(blah1, blah2, layout = l)
-        savefig(simulation, string("run/", i, ": ", moment, ", N = ", N, ".png"))
+        savefig(simulation, string("run/", i, ": ", moment, "N=10.png")) # , ", N = ", N,
     end
-    Logout(gateway)
-    StopCoinTossX()
 end
-StartCoinTossX(build = false)
-StartJVM()
-# Validation(8, :Kurtosis)
-# Validation(9, :Kurtosis)
-# Validation(10, :Kurtosis)
-# Validation(8, :Hurst)
-# Validation(9, :Hurst)
-# Validation(10, :Hurst)
-# Validation(8, :GPH)
-# Validation(9, :GPH)
-# Validation(10, :GPH)
-# Validation(8, :Hill)
-# Validation(9, :Hill)
-# Validation(10, :Hill)
-using JLD
-parameters = load("BestParameters.jld")["parameters"]
 #---------------------------------------------------------------------------------------------------
