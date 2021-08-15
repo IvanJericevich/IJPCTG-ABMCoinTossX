@@ -8,9 +8,8 @@ DataCleaning:
     2. Clean raw data into L1LOB format
     3. Plot simulation results
 - Examples:
-    reverse!(times)
-    depthProfile = CleanData("TAQ_1.5")
-    VisualiseSimulation("TAQ", "L1LOB"; format = "png") #  startTime = 500, duration = 2200
+    depthProfile = CleanData("Raw")
+    VisualiseSimulation("TAQ", "L1LOB"; startTime = DateTime("2021-07-16T12:37:00.672"), endTime = DateTime("2021-07-16T12:37:42.260"))
 =#
 using CSV, DataFrames, Dates, Plots
 clearconsole()
@@ -180,18 +179,18 @@ Output:
     - TAQ data
     - Output L1LOB file written to csv
 =#
-function CleanData(taqFile::String; allowCrossing::Bool = false, times::Vector{Millisecond} = Vector{Millisecond}())
-    orders = CSV.File(string("Data/", taqFile, ".csv"), drop = [!isempty(times) ? :DateTime : :Nothing], types = Dict(:ClientOrderId => Int64, :DateTime => DateTime, :Price => Int64, :Volume => Int64, :Side => Symbol, :Type => Symbol, :TraderMnemonic => Int64), dateformat = "yyyy-mm-dd HH:MM:SS.s") |> DataFrame
+function CleanData(raw::String; allowCrossing::Bool = false, times::Vector{Millisecond} = Vector{Millisecond}())
+    orders = CSV.File(string("Data/Calibration/", raw, ".csv"), drop = [!isempty(times) ? :DateTime : :Nothing], types = Dict(:ClientOrderId => Int64, :DateTime => DateTime, :Price => Int64, :Volume => Int64, :Side => Symbol, :Type => Symbol, :TraderMnemonic => Int64), dateformat = "yyyy-mm-dd HH:MM:SS.s") |> DataFrame
     replace!(orders.Type, :New => :Limit); orders.Type[findall(x -> x == 0, orders.Price)] .= :Market # Rename Types
     orders.ClientOrderId[findall(x -> x == :Cancelled, orders.Type)] .*= -1
-    rename!(orders, [:ClientOrderId => :OrderId, :TraderMnemonic => :Trader])
-    if !isempty(times) orders.DateTime = zeros(Float64, nrow(orders)) end; orders.Imbalance = zeros(Float64, nrow(orders)) # Calculate the order imbalance in the LOB
+    DataFrames.rename!(orders, [:ClientOrderId => :OrderId, :TraderMnemonic => :Trader])
+    if !isempty(times) orders.DateTime = zeros(Float64, nrow(orders)) end; orders.Imbalance = zeros(Union{Missing, Float64}, nrow(orders)) # Calculate the order imbalance in the LOB
     traders = CSV.File("Data/Trader.csv", drop = [:TraderId]) |> Tables.matrix |> vec
     orders.Trader = traders[orders.Trader] # Map tarder IDs to their label
     bids = Dict{Int64, Order}(); asks = Dict{Int64, Order}() # Both sides of the entire LOB are tracked with keys corresponding to orderIds
     bestBid = Best(0, 0, Vector{Int64}()); bestAsk = Best(0, 0, Vector{Int64}()) # Current best bid/ask is stored in a tuple (Price, vector of Volumes, vector of OrderIds) and tracked
     bidDepthProfile = zeros(Union{Int64, Missing}, nrow(orders), 7); askDepthProfile = zeros(Union{Int64, Missing}, nrow(orders), 7)
-    open("Data/L1LOB.csv", "w") do file
+    open("Data/Calibration/L1LOB.csv", "w") do file
         println(file, "DateTime,Price,Volume,Type,Side,MidPrice,MicroPrice,Spread") # Header
         Juno.progress() do id # Progress bar
             for i in 1:nrow(orders) # Iterate through all orders
@@ -214,12 +213,19 @@ function CleanData(taqFile::String; allowCrossing::Bool = false, times::Vector{M
                         end
                     end
                     if order.Side == :Sell # Trade was buyer-initiated (Sell MO)
-                        println(file, string(order.DateTime, ",", order.Price, ",", order.Volume, ",Market,-1,missing,missing,missing")) # Sell trade is always printed
+                        if orders[i + 1, :Type] != :Trade
+                            indeces = (findprev(x -> x == :Market, orders.Type, i) + 1):i
+                            println(file, string(order.DateTime, ",", round(Int, sum(orders[indeces, :Price] .* orders[indeces, :Volume]) / sum(orders[indeces, :Volume])), ",", sum(orders[indeces, :Volume]), ",Market,-1,missing,missing,missing")) # Combined sell trade is printed after the last split trade with VWAP price
+                        end
                         ProcessMarketOrder!(file, order, orders[i + 1, :Type], bestBid, bestAsk, bids, 1) # Sell trade affects bid side. Always aggress MO against contra side and update LOB and best
                     else # Trade was seller-initiated (Buy MO)
-                        println(file, string(order.DateTime, ",", order.Price, ",", order.Volume, ",Market,1,missing,missing,missing")) # Buy trade is always printed
+                        if orders[i + 1, :Type] != :Trade
+                            indeces = (findprev(x -> x == :Market, orders.Type, i) + 1):i
+                            println(file, string(order.DateTime, ",", round(Int, sum(orders[indeces, :Price] .* orders[indeces, :Volume]) / sum(orders[indeces, :Volume])), ",", sum(orders[indeces, :Volume]), ",Market,1,missing,missing,missing")) # Combined buy trade is printed after the last split trade with VWAP price
+                        end
                         ProcessMarketOrder!(file, order, orders[i + 1, :Type], bestAsk, bestBid, asks, -1) # Buy trade affects ask side. Always aggress MO against contra side and update LOB and best
                     end
+
                 #-- Cancel Orders --#
                 elseif order.Type == :Cancelled
                     if !isempty(times) order.DateTime = Dates.value(pop!(times)) / 1000 end
@@ -238,53 +244,55 @@ function CleanData(taqFile::String; allowCrossing::Bool = false, times::Vector{M
         end
     end
     Juno.notification("Data cleaning complete"; kind = :Info, options = Dict(:dismissable => false))
-    CSV.write("Data/TAQ.csv", orders)
+    CSV.write("Data/Calibration/TAQ.csv", orders)
     return hcat(bidDepthProfile, askDepthProfile)
 end
 #---------------------------------------------------------------------------------------------------
 
 #----- Plot simulation results -----#
-function VisualiseSimulation(taq::String, l1lob::String; format = "pdf", duration = missing, startTime = missing)
+function VisualiseSimulation(taq::String, l1lob::String; format = "pdf", endTime = missing, startTime = missing)
     # Cleaning
-    orders = CSV.File(string("Data/", taq, ".csv"), missingstring = "missing", types = Dict(:Side => Symbol, :Type => Symbol)) |> DataFrame |> x -> filter(y -> y.Type != :Market, x)
-    l1lob = CSV.File(string("Data/", l1lob, ".csv"), drop = [:Price, :Volume, :Side], missingstring = "missing") |> DataFrame |> x -> filter(y -> x.Type != :Market, x) # Filter out trades from L1LOB since their mid-prices are missing
+    orders = CSV.File(string("Data/", taq, ".csv"), missingstring = "missing", types = Dict(:Side => Symbol, :Type => Symbol, :DateTime => DateTime)) |> DataFrame |> x -> filter(y -> y.Type != :Market, x)
+    l1lob = CSV.File(string("Data/", l1lob, ".csv"), missingstring = "missing", types = Dict(:Type => Symbol, :DateTime => DateTime)) |> DataFrame |> x -> filter(y -> x.Type != :Market, x) # Filter out trades from L1LOB since their mid-prices are missing
     if !ismissing(startTime)
         filter!(x -> x.DateTime >= startTime, l1lob); filter!(x -> x.DateTime >= startTime, orders)
     end
-    if !ismissing(duration)
-        filter!(x -> x.DateTime <= duration, l1lob); filter!(x -> x.DateTime <= duration, orders)
+    if !ismissing(endTime)
+        filter!(x -> x.DateTime <= endTime, l1lob); filter!(x -> x.DateTime <= endTime, orders)
     end
+    orders.RelativeTime = @. Dates.value(orders.DateTime - orders.DateTime[1]) / 1000
+    l1lob.RelativeTime = @. Dates.value(l1lob.DateTime - l1lob.DateTime[1]) / 1000
     asks = filter(x -> x.Type == :Limit && x.Side == :Sell, orders); bids = filter(x -> x.Type == :Limit && x.Side == :Buy, orders)
-    sells = filter(x -> x.Type == :Trade && x.Side == :Sell, orders); buys = filter(x -> x.Type == :Trade && x.Side == :Buy, orders)
+    sells = filter(x -> x.Type == :Market && x.Side == -1, l1lob); buys = filter(x -> x.Type == :Market && x.Side == 1, l1lob)
     cancelAsks = filter(x -> x.Type == :Cancelled && x.Side == :Sell, orders); cancelBids = filter(x -> x.Type == :Cancelled && x.Side == :Buy, orders)
     # Bubble plot
-    bubblePlot = plot(asks.DateTime, asks.Price, seriestype = :scatter, marker = (:red, stroke(:red), 0.5), label = "Ask (LO)", ylabel = "Price (ticks)", legend = :topleft, legendfontsize = 5, tickfontsize = 5, xticks = false, fg_legend = :transparent)
-    plot!(bubblePlot, bids.DateTime, bids.Price, seriestype = :scatter, marker = (:blue, stroke(:blue), 0.5), label = "Bid (LO)")
-    plot!(bubblePlot, sells.DateTime, sells.Price, seriestype = :scatter, marker = (:red, stroke(:red), :dtriangle, 0.5), label = "Sell (MO)")
-    plot!(bubblePlot, buys.DateTime, buys.Price, seriestype = :scatter, marker = (:blue, stroke(:blue), :utriangle, 0.5), label = "Buy (MO)")
-    plot!(bubblePlot, cancelAsks.DateTime, cancelAsks.Price, seriestype = :scatter, marker = (:red, stroke(:red), :xcross, 0.5), label = "Cancel Ask")
-    plot!(bubblePlot, cancelBids.DateTime, cancelBids.Price, seriestype = :scatter, marker = (:blue, stroke(:blue), :xcross, 0.5), label = "Cancel Bid")
+    bubblePlot = plot(asks.RelativeTime, asks.Price, seriestype = :scatter, marker = (:red, stroke(:red), 0.5), label = "Ask (LO)", ylabel = "Price (ticks)", legend = :topright, legendfontsize = 5, tickfontsize = 5, xticks = false, fg_legend = :transparent)
+    plot!(bubblePlot, bids.RelativeTime, bids.Price, seriestype = :scatter, marker = (:blue, stroke(:blue), 0.5), label = "Bid (LO)")
+    plot!(bubblePlot, sells.RelativeTime, sells.Price, seriestype = :scatter, marker = (:red, stroke(:red), :dtriangle, 0.5), label = "Sell (MO)")
+    plot!(bubblePlot, buys.RelativeTime, buys.Price, seriestype = :scatter, marker = (:blue, stroke(:blue), :utriangle, 0.5), label = "Buy (MO)")
+    plot!(bubblePlot, cancelAsks.RelativeTime, cancelAsks.Price, seriestype = :scatter, marker = (:red, stroke(:red), :xcross, 0.5), label = "Cancel Ask")
+    plot!(bubblePlot, cancelBids.RelativeTime, cancelBids.Price, seriestype = :scatter, marker = (:blue, stroke(:blue), :xcross, 0.5), label = "Cancel Bid")
     # L1LOB features
-    plot!(bubblePlot, l1lob.DateTime, l1lob.MicroPrice, seriestype = :line, linecolor = :green, label = "Micro-price")
-    plot!(bubblePlot, l1lob.DateTime, l1lob.MidPrice, seriestype = :steppost, linecolor = :black, label = "Mid-price", linewidth = 2)
+    plot!(bubblePlot, l1lob.RelativeTime, l1lob.MicroPrice, seriestype = :line, linecolor = :green, label = "Micro-price")
+    plot!(bubblePlot, l1lob.RelativeTime, l1lob.MidPrice, seriestype = :steppost, linecolor = :black, label = "Mid-price", linewidth = 2)
     # Spread and imbalance features
-    volumeImbalance = plot(orders.DateTime, orders.Imbalance, seriestype = :line, linecolor = :purple, xlabel = "Time (s)", ylabel = "Order Imbalance", label = "OrderImbalance", legend = :topleft, legendfontsize = 5, tickfontsize = 5, xrotation = 30, fg_legend = :transparent)
-    plot!(twinx(), l1lob.DateTime, l1lob.Spread, seriestype = :steppost, linecolor = :orange, ylabel = "Spread", label = "Spread", legend = :topright, legendfontsize = 5, tickfontsize = 5, xaxis = false, xticks = false, fg_legend = :transparent)
+    volumeImbalance = plot(orders.RelativeTime, orders.Imbalance, seriestype = :line, linecolor = :purple, xlabel = "Time (s)", ylabel = "Order Imbalance", label = "OrderImbalance", legend = :topleft, legendfontsize = 5, tickfontsize = 5, xrotation = 30, fg_legend = :transparent)
+    plot!(twinx(), l1lob.RelativeTime, l1lob.Spread, seriestype = :steppost, linecolor = :orange, ylabel = "Spread", label = "Spread", legend = :topright, legendfontsize = 5, tickfontsize = 5, xaxis = false, xticks = false, fg_legend = :transparent)
     # Log-return plot
     filter!(x -> !ismissing(x.MidPrice), l1lob)
     logreturns = diff(log.(l1lob.MidPrice))
-    returns = plot(l1lob.DateTime[2:end], logreturns, seriestype = :line, linecolor = :black, legend = false, tickfontsize = 5, ylabel = "Log-returns", xticks = false)
+    returns = plot(l1lob.RelativeTime[2:end], logreturns, seriestype = :line, linecolor = :black, legend = false, tickfontsize = 5, ylabel = "Log-returns", xticks = false)
     l = @layout([a; b{0.2h}; c{0.2h}])
     simulation = plot(bubblePlot, returns, volumeImbalance, layout = l, link = :x, guidefontsize = 7)
     savefig(simulation, "Figures/Simulation." * format)
     # Agents
     TFSells = filter(x -> x.Trader[1:2] == "TF", sells); TFBuys = filter(x -> x.Trader[1:2] == "TF", buys)
-    TFAgents = plot(TFSells.DateTime, TFSells.Price, seriestype = :scatter, marker = (:red, stroke(:red), :dtriangle, 0.7), label = "Sell (MO)", ylabel = "Price (ticks)", legend = :topleft, legendfontsize = 5, xrotation = 30, fg_legend = :transparent)
-    plot!(TFAgents, TFBuys.DateTime, TFBuys.Price, seriestype = :scatter, marker = (:blue, stroke(:blue), :utriangle, 0.7), label = "Buy (MO)")
+    TFAgents = plot(TFSells.RelativeTime, TFSells.Price, seriestype = :scatter, marker = (:red, stroke(:red), :dtriangle, 0.7), label = "Sell (MO)", ylabel = "Price (ticks)", legend = :topleft, legendfontsize = 5, xrotation = 30, fg_legend = :transparent)
+    plot!(TFAgents, TFBuys.RelativeTime, TFBuys.Price, seriestype = :scatter, marker = (:blue, stroke(:blue), :utriangle, 0.7), label = "Buy (MO)")
     savefig(TFAgents, "Figures/TFAgents." * format)
     VISells = filter(x -> x.Trader[1:2] == "VI", sells); VIBuys = filter(x -> x.Trader[1:2] == "VI", buys)
-    VIAgents = plot(VISells.DateTime, VISells.Price, seriestype = :scatter, marker = (:red, stroke(:red), :dtriangle, 0.7), label = "Sell (MO)", ylabel = "Price (ticks)", legend = :topleft, legendfontsize = 5, xrotation = 30, fg_legend = :transparent)
-    plot!(VIAgents, VIBuys.DateTime, VIBuys.Price, seriestype = :scatter, marker = (:blue, stroke(:blue), :utriangle, 0.7), label = "Buy (MO)")
+    VIAgents = plot(VISells.RelativeTime, VISells.Price, seriestype = :scatter, marker = (:red, stroke(:red), :dtriangle, 0.7), label = "Sell (MO)", ylabel = "Price (ticks)", legend = :topleft, legendfontsize = 5, xrotation = 30, fg_legend = :transparent)
+    plot!(VIAgents, VIBuys.RelativeTime, VIBuys.Price, seriestype = :scatter, marker = (:blue, stroke(:blue), :utriangle, 0.7), label = "Buy (MO)")
     savefig(VIAgents, "Figures/VIAgents." * format)
 end
 #---------------------------------------------------------------------------------------------------

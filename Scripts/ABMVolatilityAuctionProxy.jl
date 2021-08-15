@@ -13,9 +13,7 @@ ABMVolatilityAuctionProxy:
 	7. Agent decision times
 	8. Simulation
 - Examples:
-	StartCoinTossX(build = false)
-	StartJVM()
-	gateway = Login(1, 1)
+	StartCoinTossX(build = false); StartJVM(); gateway = Login(1, 1)
 	param = Parameters(Nᴸₜ = 1, Nᴸᵥ = 1, Nᴴ = 8, δ = 0.01, κ = 1, ν = 1.5, m₀ = 10000, σ = 0.1, T = Millisecond(3000 * 1000))
 	x = InjectSimulation(gateway, param)
 	Logout(gateway)
@@ -294,7 +292,7 @@ function InjectSimulation(gateway, parameters; seed = 1)
     # Initialize LOB state and MA
     LOB = LOBState(100, 0, parameters.m₀, NaN, parameters.m₀, 9950, 10050, Dict{Int64, LimitOrder}(), Dict{Int64, LimitOrder}())
     MA = MovingAverage(parameters.m₀, [Millisecond(0); data.RelativeTime], mean(diff(Dates.value.([Millisecond(0); data.RelativeTime]))))
-    times = Vector{Millisecond}(); microprice = Vector{Float64}() # Setup storage for time series of mid-price
+    midprice = Vector{Float64}(); microprice = Vector{Float64}() # Setup storage for time series of mid-price times = Vector{Millisecond}();
 	StartLOB(gateway)
     receiver = UDPSocket()
     connected = bind(receiver, ip"127.0.0.1", 1234)
@@ -302,7 +300,7 @@ function InjectSimulation(gateway, parameters; seed = 1)
         println("Market data listener connected")
     end
     try # This ensures that the client gets logged out whether an error occurs or not
-        data.Time = data.RelativeTime #.+ Time(now())
+        # data.Time = data.RelativeTime #.+ Time(now())
         Juno.progress() do id # Progress bar
             for i in 1:nrow(data)
 				order = data[i, :Order]
@@ -334,14 +332,12 @@ function InjectSimulation(gateway, parameters; seed = 1)
 				end
                 if messagesent == true
                     message = String(recv(receiver))
-                    #println(message)
                     UpdateLOBState!(LOB, message)
-                    #println(LOB.sₜ)
-					#println(string(LOB.priceReference, "      ", LOB.bₜ, "       ", LOB.aₜ))
-                    #push!(times, data[i, :Time])
+                    push!(times, data[i, :Time])
 					if LOB.microPrice < 0
 						throw(error("Negative price"))
 					else
+						push!(midprice, LOB.mₜ)
 						push!(microprice, LOB.microPrice)
 					end
                 end
@@ -356,6 +352,6 @@ function InjectSimulation(gateway, parameters; seed = 1)
     end
 	close(receiver)
 	EndLOB(gateway)
-    return microprice
+    return midprice, microprice
 end
 #---------------------------------------------------------------------------------------------------

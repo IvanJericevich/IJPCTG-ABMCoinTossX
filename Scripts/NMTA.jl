@@ -15,6 +15,7 @@ import StatsBase: var
 import LinearAlgebra: rmul!
 import Random: rand
 import NLSolversBase: value, value!, value!!, NonDifferentiable
+import Distributions: Normal
 #---------------------------------------------------------------------------------------------------
 
 #----- Structures -----#
@@ -29,9 +30,9 @@ struct Options{T <: Real}
     show_every::Int64
     time_limit::Float64
     ξ::Float64
-    ta_rounds::Int64
+    ta_rounds::Vector{Int64}
 end
-function Options(; f_reltol::Vector{Float64} = Vector{Float64}(), ta_rounds::Int64 = 0, g_abstol::Real = 1e-8, iterations::Int64 = 1_000, store_trace::Bool = false, trace_simplex::Bool = false, show_trace::Bool = false, extended_trace::Bool = false, show_every::Int64 = 1, time_limit = NaN, ξ = 0.0)
+function Options(; f_reltol::Vector{Float64} = Vector{Float64}(), ta_rounds::Vector{Int64} = Vector{Int64}(), g_abstol::Real = 1e-8, iterations::Int64 = 1_000, store_trace::Bool = false, trace_simplex::Bool = false, show_trace::Bool = false, extended_trace::Bool = false, show_every::Int64 = 1, time_limit = NaN, ξ = 0.0)
     Options(f_reltol, g_abstol, iterations, store_trace, trace_simplex, show_trace, extended_trace, show_every, Float64(time_limit), ξ, ta_rounds)
 end
 struct OptimizationState{Tf <: Real}
@@ -105,7 +106,7 @@ mutable struct OptimizationResults{Tx <: AbstractArray, Tf <: Real}
     minimum::Tf
     iterations::Int64
     iteration_converged::Bool
-    f_reltol::Vector{Float64}()
+    f_reltol::Vector{Float64}
     g_converged::Bool
     g_abstol::Float64
     f_increased::Bool
@@ -170,13 +171,14 @@ end
 function ThresholdAccepting!(f::NonDifferentiable, state::NelderMeadState, τ::Float64)
     n, m = length(state.x), state.m
     paramindex = rand(1:n)
-    perturbation = (rand() - 0.5) * (sum(getindex.(state.simplex, paramindex)) / n) # (sum(state.simplex[i][param_index] for i in 1:n) / n)
-    @. state.x_cache = state.simplex[state.i_order[paramindex]] + perturbation
+    perturbation = zeros(Float64, n)
+    perturbation[paramindex] = rand(Normal(0, abs(sum(getindex.(state.simplex, paramindex)) / 2m)))
+    @. state.x_cache = state.simplex[state.i_order[1]] + perturbation
     f_perturb = value(f, state.x_cache)
-    if f_perturb < state.f_simplex[state.i_order[1]] + τ # Only accept if perturbation is now worse than the best + some threshold
+    if f_perturb < state.f_simplex[state.i_order[1]] + τ # Only accept if perturbation is now better than the best + some threshold
         # Update state
-        copyto!(state.simplex[state.i_order[i]], state.x_cache) # Replace solution with new solution
-        @inbounds state.f_simplex[state.i_order[i]] = f_perturb # Replace objective value with new value
+        copyto!(state.simplex[state.i_order[1]], state.x_cache) # Replace solution with new solution
+        @inbounds state.f_simplex[state.i_order[1]] = f_perturb # Replace objective value with new value
     end
     state.step_type = "thresholding"
     sortperm!(state.i_order, state.f_simplex) # Sort indeces of simplexes in ascending order of objective value
@@ -256,7 +258,7 @@ function SimplexSearch!(f::NonDifferentiable, state::NelderMeadState, τ::Float6
             copyto!(state.simplex[ord], state.x_lowest + state.δ*(state.simplex[ord]-state.x_lowest))
             state.f_simplex[ord] = value(f, state.simplex[ord])
         end
-        step_type = "shrink"
+        state.step_type = "shrink"
         sortperm!(state.i_order, state.f_simplex)
     end
     state.nm_x = NelderMeadObjective(state.f_simplex, n, m)
@@ -314,7 +316,7 @@ end
 function Optimize(f::NonDifferentiable{Tf, Tx}, initial_x::Tx, options::Options{T} = Options(), state::NelderMeadState = InitialState(NelderMead(), f, initial_x)) where {Tx <: AbstractArray, Tf <: Real, T <: Real}
     t₀ = time() # Initial time stamp used to control early stopping by options.time_limit
     tr = OptimizationTrace{Tf}() # Store optimization trace
-    thresholds = options.ta_rounds != 0 ? reduce(vcat, fill.(options.f_reltol, options.ta_rounds)) : nothing
+    thresholds = !isempty(options.ta_rounds) ? reduce(vcat, fill.(options.f_reltol, options.ta_rounds)) : zeros(options.iterations)
     tracing = options.store_trace || options.show_trace || options.extended_trace
     stopped, stopped_by_time_limit, f_increased = false, false, false
     g_converged = InitialConvergence(state, initial_x, options) # Converged if criterion is met
@@ -327,10 +329,11 @@ function Optimize(f::NonDifferentiable{Tf, Tx}, initial_x::Tx, options::Options{
     Trace!(tr, state, iteration, options, t - t₀)
     while !g_converged && !stopped_by_time_limit && iteration < options.iterations
         iteration += 1
+        println(string(thresholds[iteration], "      ", thresholds[iteration] * sum(state.f_simplex) / state.m))
         if rand() < options.ξ
-            ThresholdAccepting!(f, state, thresholds[iteration] * state.f_lowest)
+            ThresholdAccepting!(f, state, thresholds[iteration] * (sum(state.f_simplex) / state.m))
         else
-            SimplexSearch!(f, state, thresholds[iteration] * state.f_lowest) # Precentage of best solution
+            SimplexSearch!(f, state, thresholds[iteration] * (sum(state.f_simplex) / state.m)) # Percentage of best solution
         end
         g_converged, f_increased = AssessConvergence(state, options)
         if tracing

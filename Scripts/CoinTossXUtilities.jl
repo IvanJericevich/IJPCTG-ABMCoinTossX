@@ -6,25 +6,20 @@ CoinTossXUtilities:
 - Structure:
     1. Build, deploy, start CoinTossX and initialise Java Virtual Machine with required byte code paths
     2. Order creation structure
-    3. Agent structure
+    3. Client structure
     4. Initialize client by logging in to the trading gateway and starting the trading session
-    5. Submit an order to CoinTossX
+	5. Reset LOB
+    6. Submit an order to CoinTossX
     7. Cancel an existing order
     8. Receive updates to the best bid/ask
-    13. Destroy client by logging out and ending the trading session
+    9. Shutdown all components of CoinTossX
 =#
-# run(`export JULIA_COPY_STACKS=1`)
-# ENV["JULIA_COPY_STACKS"] = 1
 using JavaCall
-directory = "/home/ivanjericevich"
-directory = "/Users/patrickchang1/Exchange"
+directory = "<removed>" # Location of CoinTossX
 #---------------------------------------------------------------------------------------------------
 
 #----- Build, deploy, start CoinTossX and initialise Java Virtual Machine with required byte code paths -----#
 function StartCoinTossX(; build::Bool = true, deploy::Bool = true)
-    # run(`sudo sysctl net.core.rmem_max=2097152`)
-    # run(`sudo sysctl net.core.wmem_max=2097152`)
-    # run(`sudo sysctl vm.nr_hugepages=10000`)
     cd(directory * "/CoinTossX")
 	if build
 		run(`./gradlew -Penv=local build -x test`)
@@ -40,7 +35,7 @@ end
 function StartJVM()
     JavaCall.addClassPath(directory * "/CoinTossX/ClientSimulator/build/classes/main")
     JavaCall.addClassPath(directory * "/CoinTossX/ClientSimulator/build/install/ClientSimulator/lib/*.jar")
-    JavaCall.init(["-Xmx2G", "-Xms2G", "-d64", "-server", "-XX:+UseStringDeduplication", "-Dagrona.disable.bounds.checks=true", "-XX:+UnlockDiagnosticVMOptions", "-XX:GuaranteedSafepointInterval=300000", "-XX:+UseG1GC", "-XX:+UseLargePages", "-XX:+OptimizeStringConcat", "-XX:+UseCondCardMark"])
+    JavaCall.init(["-Xmx2G", "-Xms2G", "-d64", "-server", "-XX:+UseStringDeduplication", "-Dagrona.disable.bounds.checks=true", "-XX:+UseG1GC", "-XX:+UseLargePages", "-XX:+OptimizeStringConcat", "-XX:+UseCondCardMark"])
     Juno.notification("JVM started"; kind = :Info, options = Dict(:dismissable => false))
 end
 #---------------------------------------------------------------------------------------------------
@@ -69,8 +64,8 @@ mutable struct Order
 end
 #---------------------------------------------------------------------------------------------------
 
-#----- Agent structure -----#
-struct TradingGateway
+#----- Client structure -----#
+mutable struct TradingGateway
     id::Int64
     securityId::Int64
     javaObject::JavaObject{Symbol("client.Client")}
@@ -84,6 +79,12 @@ function Login(clientId::Int64, securityId::Int64)
     javaObject = jcall(utilities, "loadClientData", JavaObject{Symbol("client.Client")}, (jint, jint), clientId, securityId)
     Juno.notification("Logged in and trading session started"; kind = :Info, options = Dict(:dismissable => false))
     return TradingGateway(clientId, securityId, javaObject)
+end
+function Login!(tradingGateway::TradingGateway)
+    cd(directory)
+    utilities = @jimport example.Utilities
+    tradingGateway.javaObject = jcall(utilities, "loadClientData", JavaObject{Symbol("client.Client")}, (jint, jint), tradingGateway.id, tradingGateway.securityId)
+    Juno.notification("Logged in and trading session started"; kind = :Info, options = Dict(:dismissable => false))
 end
 #---------------------------------------------------------------------------------------------------
 
@@ -118,7 +119,11 @@ end
 #----- Shutdown all components of CoinTossX -----#
 function StopCoinTossX()
     cd(directory * "/run/scripts")
-    run(`./stopAll.sh`)
+	try
+		run(`./stopAll.sh`)
+	catch e
+		println(e)
+	end
     Juno.notification("CoinTossX stopped"; kind = :Info, options = Dict(:dismissable => false))
 end
 #---------------------------------------------------------------------------------------------------

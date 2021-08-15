@@ -55,8 +55,7 @@ function HurstExponent(x, d = 100)
     return coeffs(Polynomials.fit(Polynomial, log10.(d), log10.(RSempirical), 1))[2] # Hurst is slope of log-log linear fit
 end
 function Divisors(n, n₀)
-    temp = n₀:floor(n/2)
-    return temp[findall(x -> mod(n, x) == 0, temp)]
+    return filter(x -> mod(n, x) == 0, n₀:floor(n/2))
 end
 function RS(z, n)
     y = reshape(z, (Int(n), Int(length(z) / n)))

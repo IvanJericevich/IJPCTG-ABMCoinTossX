@@ -11,16 +11,14 @@ Calibration:
 - Examples:
     midprice = CSV.File("Data/JSECleanedTAQNPN.csv", select = [:MidPrice], limit = 40000) |> Tables.matrix |> vec |> x -> filter(y -> !isnan(y), x)
     W = MovingBlockBootstrap(midprice, 500)
-    Calibrate(W, midprice)
+    Calibrate(initialsolution)
 =#
-using DataFrames, JLD, Plots#, Distributed
-import CSV: File
-import Random.rand
-# import Statistics: cov
-# addprocs(2)
-# @everywhere import Random.rand
-# @everywhere include("Scripts/Moments.jl")
-include("CoinTossXUtilities.jl"); include("ABMVolatilityAuctionProxy.jl"); include("NMTA.jl")
+using JLD, CSV, Plots
+import Statistics: cov
+addprocs(2)
+@everywhere import Random.rand
+@everywhere include("Scripts/Moments.jl")
+include("ABMVolatilityAuctionProxy.jl"); include("NMTA.jl")
 #---------------------------------------------------------------------------------------------------
 
 #----- Moving block bootstrap to estimate covariance matrix of empirical moments on JSE mid-price time-series -----#
@@ -48,8 +46,13 @@ function WeightedSumofSquaredErrors(parameters::Parameters, replications::Int64,
         if !isempty(microprice)
             filter!(x -> !isnan(x), microprice)
             logreturns = diff(log.(microprice))
-            simulatedmoments = Moments(logreturns, empiricallogreturns)
-            errormatrix[i, :] = [simulatedmoments.μ-empiricalmoments.μ simulatedmoments.σ-empiricalmoments.σ simulatedmoments.κ-empiricalmoments.κ simulatedmoments.ks-empiricalmoments.ks simulatedmoments.hurst-empiricalmoments.hurst simulatedmoments.gph-empiricalmoments.gph simulatedmoments.adf-empiricalmoments.adf simulatedmoments.garch-empiricalmoments.garch simulatedmoments.hill-empiricalmoments.hill]
+            try
+                simulatedmoments = Moments(logreturns, empiricallogreturns)
+                errormatrix[i, :] = [simulatedmoments.μ-empiricalmoments.μ simulatedmoments.σ-empiricalmoments.σ simulatedmoments.κ-empiricalmoments.κ simulatedmoments.ks-empiricalmoments.ks simulatedmoments.hurst-empiricalmoments.hurst simulatedmoments.gph-empiricalmoments.gph simulatedmoments.adf-empiricalmoments.adf simulatedmoments.garch-empiricalmoments.garch simulatedmoments.hill-empiricalmoments.hill]
+            catch e
+                println(e)
+                errormatrix[i, :] = errormatrix[i - 1, :]
+            end
         else
             return Inf
         end
@@ -61,45 +64,34 @@ end
 #---------------------------------------------------------------------------------------------------
 
 #----- Calibrate with NMTA optimization -----#
-function Calibrate(initialsolution::Vector{Float64}, f_reltol::Vector{Float64} = [0.3, 0.2, 0.1, 0], ta_rounds::Vector{Int64} = [14, 12, 10, 8], neldermeadstate = nothing)
-    empiricallogreturns = File("Data/JSEL1LOB.csv", missingstring = "missing", ignoreemptylines = true, select = [:MicroPrice], skipto = 20000, limit = 20000) |> Tables.matrix |> vec |> y -> filter(z -> !ismissing(z), y) |> x -> diff(log.(x))
+function Calibrate(initialsolution::Vector{Float64}; f_reltol::Vector{Float64} = [0.3, 0.2, 0.1, 0], ta_rounds::Vector{Int64} = [12, 10, 8, 6], neldermeadstate = nothing)
+    empiricallogreturns = CSV.File("JSE/L1LOB.csv", missingstring = "missing", ignoreemptylines = true, select = [:MicroPrice], skipto = 20000, limit = 20000) |> Tables.matrix |> vec |> y -> filter(z -> !ismissing(z), y) |> x -> diff(log.(x))
     empiricalmoments = Moments(empiricallogreturns, empiricallogreturns)
     StartCoinTossX(build = false); StartJVM(); sleep(20); gateway = Login(1, 1)
-    W = load("Data/W.jld")["W"]
-
-    try
-        objective = NonDifferentiable(x -> WeightedSumofSquaredErrors(Parameters(Nᴴ = Int(ceil(x[1])), δ = x[2], κ = x[3], ν = x[4], σ = x[5], T = Millisecond(3600 * 2 * 1000)), 10, W, empiricalmoments, empiricallogreturns, gateway), initialsolution)
-        optimizationoptions = Options(show_trace = true, store_trace = true, trace_simplex = true, extended_trace = true, iterations = sum(ta_rounds), ξ = 0.15, ta_rounds = ta_rounds, f_reltol = f_reltol)
-        result = !isnothing(neldermeadstate) ? Optimize(objective, initialsolution, optimizationoptions, neldermeadstate) : Optimize(objective, initialsolution, optimizationoptions)
-        save("Data/OptimizationResults.jld", "result", result)
-    catch e
-        println(e)
-        Logout(gateway); StopCoinTossX()
-    end
+    W = load("W.jld")["W"]
+    counter = Counter(0)
+    objective = NonDifferentiable(x -> WeightedSumofSquaredErrors(Parameters(Nᴴ = Int(ceil(x[1])), δ = abs(x[2]), κ = abs(x[3]), ν = abs(x[4]), σ = abs(x[5]), T = Millisecond(3600 * 2 * 1000)), 4, W, empiricalmoments, empiricallogreturns, gateway), initialsolution)
+    optimizationoptions = Options(show_trace = true, store_trace = true, trace_simplex = true, extended_trace = true, iterations = !isempty(ta_rounds) ? sum(ta_rounds) : 30, ξ = 0.15, ta_rounds = ta_rounds, f_reltol = f_reltol)
+    result = !isnothing(neldermeadstate) ? Optimize(objective, initialsolution, optimizationoptions, neldermeadstate) : Optimize(objective, initialsolution, optimizationoptions)
+    save("OptimizationResult.jld", "result", result)
     Logout(gateway); StopCoinTossX()
 end
-initialsolution = load("BestParameters.jld")["parameters"][end - 1]
-neldermeadstate = end_state(load("OptimizationResults.jld")["result"])
-Calibrate([initialsolution.Nᴴ, initialsolution.δ, initialsolution.κ, initialsolution.ν, initialsolution.σ], 10, neldermeadstate)
 #---------------------------------------------------------------------------------------------------
 
 #----- Validate optimization results -----#
-result = load("Data/OptimizationResults.jld")["result"]
-typeof(result)
-stacktrace = trace(result)
-f = zeros(Float64, length(trace)); g_norm = zeros(Float64, length(trace)); f_simplex = fill(0.0, length(trace), 3); centroid = fill(0.0, length(trace), 2)
-for i in 1:length(trace)
-    f[i] = trace[i].value
-    g_norm[i] = trace[i].g_norm
-    metadata = trace[i].metadata
-    f_simplex[i, :] = transpose(metadata["simplex_values"])
-    centroid[i, :] = transpose(metadata["centroid"])
+stacktrace = load("Data/Calibration/OptimizationResults.jld")["result"]
+f = zeros(Float64, length(stacktrace)); g_norm = zeros(Float64, length(stacktrace)); f_simplex = fill(0.0, length(stacktrace), 6)#; centr = fill(0.0, length(stacktrace), 5); metadata = Vector{Dict{Any, Any}}()
+for i in 1:length(stacktrace)
+    f[i] = stacktrace[i].value
+    g_norm[i] = stacktrace[i].g_norm
+    push!(metadata, stacktrace[i].metadata)
+    f_simplex[i, :] = transpose(stacktrace[i].metadata["simplex_values"])
 end
 # Objectives
-objectives = plot(1:length(trace), f, seriestype = :line, linecolor = :blue, label = "Weighted SSE objective", xlabel = "Iteration", ylabel = "Value", legendfontsize = 5, fg_legend = :transparent, tickfontsize = 5, xaxis = false, xticks = false)
-plot!(twinx(), 1:length(trace), g_norm, seriestype = :line, linecolor = :purple, label = "Convergence criterion", legend = :topright)
+objectives = plot(1:length(stacktrace), f, seriestype = :line, linecolor = :blue, label = "Weighted SSE objective", xlabel = "Iteration", ylabel = "Weighted SSE objective", legendfontsize = 5, fg_legend = :transparent, tickfontsize = 5, xaxis = false, xticks = false, legend = :bottomleft, guidefontsize = 7, yscale = :log10, minorticks = true)
+plot!(twinx(), 1:length(stacktrace), g_norm, seriestype = :line, linecolor = :purple, label = "Convergence criterion", ylabel = "Convergence criterion", legend = :topright, legendfontsize = 5, fg_legend = :transparent, tickfontsize = 5, yscale = :log10, minorticks = true)
+savefig(objectives, "Figures/NMTAFitness.pdf")
 # Simplex values
-plot(1:length(trace), f_simplex, seriestype = :line, linecolor = [:blue :purple :green], xlabel = "Iteration", ylabel = "Simplex objective values")
-# Centroids
-plot(1:length(trace), centroid, seriestype = :line, linecolor = [:blue :purple], xlabel = "Iteration", ylabel = "Simplex objective values")
+convergence = plot(1:length(stacktrace), f_simplex, seriestype = :line, linecolor = [:blue :purple :green :orange :red :black], xlabel = "Iteration", ylabel = "Weighted SSE objective", legend = false, tickfontsize = 5, guidefontsize = 7, yscale = :log10, minorticks = true)
+savefig(convergence, "Figures/NMTASimplexFitnesses.pdf")
 #---------------------------------------------------------------------------------------------------
