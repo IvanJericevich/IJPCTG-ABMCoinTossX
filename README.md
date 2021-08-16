@@ -16,6 +16,7 @@ We present an agent-based model in an artificial exchange framework that is able
 * Construction of the method of moments objective and implementation of the simulated minimum distance method in the context of financial market ABMs
 * JSE and CoinTossX data cleaning functions
 
+The key innovation here is that the model updates no longer occur in chronological or calendar time. Here the Model Management System (MMS) polls the market data feed based on asynchronous model time, rather than be entirely driven by the event time of the market. This framework provides a basis for future development.
 
 ## Prerequisites
 * [Julia](https://julialang.org) programming langauge
@@ -32,3 +33,12 @@ Packages can be installed using
 Pkg.add("...")
 ```
 Each script contains examples of how to run the relevant functions. [CoinTossXUtilities.jl](Scripts/CoinTossXUtilities.jl) contains the important functions for interacting with CoinTossX. [ABMVolatilityAuctionProxy.jl](Scripts/ABMVolatilityAuctionProxy.jl) is the script used to simulate using the ABM and submit generated orders via the model to CoinTossX. [Calibration.jl](Scripts/Calibration.jl) calibrates parameters to empirical JSE TAQ data. [SensitivityAnalysis.jl](Scripts/SensitivityAnalysis.jl) provides code for the recovery of sensitivity analysis results and figures. Important to the calibration of parameters and sensitivity analysis is the algorithm for cleaning and re-formatting raw data from both COinTossX and JSE. This is demonstrated in [DataCleaning](DataCleaning).
+
+### Data structure
+Provided in the [Data](Data) folder is cleaned level 1 LOB data from calibrated parameters applied to CoinTossX (for visualisation), along with the calibrated parameters (with confidence intervals). Additionally, the NMTA optimization stacktrace with the bootstrapped covariance matrix of empirical log-returns are provided as well. The exact files and their contents are as follows:
+* [Data/Trader.csv](Data/Trades_1.csv) contains the trader menmonics of all trader agent types.
+* [Data/ParametersCI.csv](Data/ParametersCI.csv) contains the error bars around calibrated parameters.
+* [Data/MomentsCI.csv](Data/MomentsCI.csv) contains the error bars around moments computed from simulationds with calibrated parameters.
+* [Data/Calibration/L1LOB.csv](Data/Calibration/L1LOB.csv) contains the cleaned level 1 LOB data from simulations with calibrated parameters.
+* [Data/Calibration/OptimisationResults.jld](Data/Calibration/OptimisationResults.jld) is the data file for the NMTA optimization stacktrace.
+* [Data/Calibration/W.jld](Data/Calibration/W.jld) is the data file for the bootstrapped covariance matrix of empirical log-returns.
